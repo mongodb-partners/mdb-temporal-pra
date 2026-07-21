@@ -110,7 +110,7 @@ flowchart LR
     USER([User])
 
     %% ---------- spine edges (left → right) ----------
-    SRC -->|"CDC / change-stream / files"| KAFKA
+    SRC -->|"Atlas Stream Processing / change-stream / files"| KAFKA
     EMBED -->|"upsert embedded docs"| KB
     VS -->|"read knowledge + memory"| KAGT
     MAGT -->|"persist memory"| MEM
@@ -172,14 +172,15 @@ Temporal owns everything: consume raw → chunk → write chunks back to Kafka �
 **Connector priority (proposal):**
 
 1. **Kafka first** — the demo's primary streaming source. Part 1 connects to Kafka first.
-2. **CDC / Debezium second** — off SQL Server and Oracle, produced _onto Kafka topics_ (Jack Henry
-   explicitly wants us to own the Debezium complexity).
+2. **Atlas Stream Processing second** — MongoDB Atlas Stream Processing reads change streams from
+   Atlas (and other sources) and produces records _onto Kafka topics_, replacing the need for an
+   external Debezium connector.
 3. **Snowflake later.**
 
 > **Aligned with sketch:** sources → **Kafka raw topic** → **Temporal chunks** → **chunks written
 > back to Kafka** → **Temporal embeds + stores to Atlas**. Kafka lives inside Part 1. Incremental
-> sync is achieved by CDC/Change-Stream events arriving as Kafka records plus content-hash dedupe in
-> the Chunk Workflow.
+> sync is achieved by Atlas Stream Processing change-stream events arriving as Kafka records plus
+> content-hash dedupe in the Chunk Workflow.
 
 ### Temporal workflows & activities
 
@@ -207,9 +208,9 @@ sequenceDiagram
 **Workflows**
 
 - **`ChunkWorkflow`** — **consumes the raw Kafka topic** (records may originate from RDBMS, S3, IoT,
-  MongoDB, or CDC/Debezium). Applies content-hash dedupe, chunks the payload, and **writes chunks
-  back to a Kafka `chunks` topic**. This decouples the cheap chunking step from the expensive
-  embedding step and guarantees every chunk is processed even across restarts.
+  MongoDB, or Atlas Stream Processing). Applies content-hash dedupe, chunks the payload, and
+  **writes chunks back to a Kafka `chunks` topic**. This decouples the cheap chunking step from the
+  expensive embedding step and guarantees every chunk is processed even across restarts.
 - **`EmbedWriteWorkflow`** — **consumes the `chunks` topic**, embeds each chunk via Voyage,
   serializes to BSON, and upserts to the Atlas knowledge collection + vector index. Emits
   `Intermediate states` as workflow history so a crash resumes without re-embedding done chunks.
@@ -224,8 +225,8 @@ These are the proposal's headline value props. The design makes each one explici
 
 | #   | Guarantee                            | How it's implemented                                                                                                                                                                                                                                           |
 | --- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Multiple sources**                 | All sources (RDBMS, S3, IoT, Kafka topic, MongoDB, CDC) feed the **Kafka raw topic**; `ChunkWorkflow` consumes it — all land in MongoDB.                                                                                                                       |
-| 2   | **Incremental, change-driven sync**  | CDC/Change-Stream records on Kafka + content-hash dedupe → only what changed is reprocessed (replaces Regilient's hand-rolled MD5, Glassdoor's cron).                                                                                                          |
+| 1   | **Multiple sources**                 | All sources (RDBMS, S3, IoT, Kafka topic, MongoDB, Atlas Stream Processing) feed the **Kafka raw topic**; `ChunkWorkflow` consumes it — all land in MongoDB.                                                                                                   |
+| 2   | **Incremental, change-driven sync**  | Atlas Stream Processing change-stream records on Kafka + content-hash dedupe → only what changed is reprocessed (replaces Regilient's hand-rolled MD5, Glassdoor's cron).                                                                                      |
 | 3   | **Durable, resumable execution**     | Chunks are **written back to a Kafka `chunks` topic** and workflow history checkpoints each activity. A failure at hour 4 resumes from the last step and **does not re-embed** the 3 hours already done — embedding is metered (fixes Emerald X's full-rerun). |
 | 4   | **Backfill as first-class workflow** | `BackfillWorkflow` **reads existing Atlas data, re-embeds, and rewrites to Atlas** for dimension-changing model upgrades (Voyage 3→4) — durable, progress preserved.                                                                                           |
 
@@ -296,7 +297,7 @@ flowchart TB
 | --------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
 | Source: mysql, S3, IoT, Kafka topic, MongoDB        | Same sources, all **feeding into Kafka** streaming layer            | Matches sketch: sources funnel through Kafka            |
 | Kafka box                                           | Moved **inside Part 1**; two topics — raw + chunks                  | Chunks written back to Kafka for guaranteed processing  |
-| "Temporal SDK + Atlas Stream Processing" bar        | `ChunkWorkflow` + `EmbedWriteWorkflow` (Temporal SDK)               | Makes durability/resume explicit                        |
+| "Temporal SDK + Atlas Stream Processing" bar        | `ChunkWorkflow` + `EmbedWriteWorkflow` (Temporal SDK) + Atlas Stream Processing for change events | Makes durability/resume explicit |
 | `chunk → Embed(VAI) → BSON → write Collection_1`    | Chunk → **Kafka chunks topic** → embed → BSON → write, checkpointed | Adds Kafka hand-off + content-hash dedupe (no re-embed) |
 | "Intermediate states" label                         | Temporal **workflow history**                                       | This _is_ the resumability guarantee                    |
 | "Embedded Data + backfill"                          | `BackfillWorkflow` **reads Atlas → re-embed → rewrite Atlas**       | Backfill re-embeds existing Atlas data, not source      |
@@ -312,7 +313,7 @@ flowchart TB
 
 **In scope**
 
-- **Part 1:** Kafka + API source, Change-Stream/CDC incremental sync, Voyage embedding,
+- **Part 1:** Kafka + API source, Atlas Stream Processing change-stream incremental sync, Voyage embedding,
   resume-without-re-embed, model-version backfill.
 - **Part 2:** framework-neutral agent, vector retrieval, agent state in MongoDB under Temporal.
 - Shipped as a **public, forkable repo** + live demo.
@@ -340,10 +341,10 @@ temporal-pra/
 │   │   ├── embed_voyage.py         # metered; idempotent
 │   │   └── write_atlas.py          # BSON serialize + upsert
 │   ├── kafka/
-│   │   ├── raw_topic.py            # all sources -> raw topic
-│   │   ├── chunks_topic.py         # chunks written back for guaranteed processing
-│   │   ├── cdc_debezium.py         # CDC producers onto Kafka topics
-│   │   └── producers.py            # RDBMS/S3/IoT/MongoDB -> Kafka
+│   │   ├── raw_topic.py                  # all sources -> raw topic
+│   │   ├── chunks_topic.py               # chunks written back for guaranteed processing
+│   │   ├── atlas_stream_processing.py    # Atlas Stream Processing -> Kafka topics
+│   │   └── producers.py                  # RDBMS/S3/IoT/MongoDB -> Kafka
 │   └── worker.py                   # Temporal SDK worker
 ├── agent/
 │   ├── agent.py                    # framework-neutral entrypoint
