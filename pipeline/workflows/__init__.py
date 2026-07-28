@@ -1,7 +1,6 @@
-"""Temporal workflows for the Part 1 pipeline."""
+"""Temporal workflows for the ingest pipeline."""
 
 from .backfill_workflow import BackfillWorkflow
-from .chunk_workflow import ChunkWorkflow
-from .embed_write_workflow import EmbedWriteWorkflow
+from .ingest_workflow import IngestWorkflow
 
-ALL_WORKFLOWS = [ChunkWorkflow, EmbedWriteWorkflow, BackfillWorkflow]
+ALL_WORKFLOWS = [IngestWorkflow, BackfillWorkflow]

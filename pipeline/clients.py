@@ -24,7 +24,7 @@ def mongo_client() -> "MongoClient":
 
     if not settings.mongodb_uri:
         raise RuntimeError("MONGODB_URI is not set — populate .env before running.")
-    return MongoClient(settings.mongodb_uri, appname="temporal-pra")
+    return MongoClient(settings.mongodb_uri, appname="teamporal-app")
 
 
 def knowledge_collection(name: str | None = None):
@@ -41,12 +41,26 @@ def voyage_client() -> "voyageai.Client":
     return voyageai.Client(api_key=settings.voyage_api_key)
 
 
+def _aws_kwargs() -> dict:
+    """Common boto3 kwargs: region + explicit creds when provided in settings.
+
+    boto3 does not read our .env, so any creds set there (incl. MinIO's
+    minioadmin/minioadmin) must be passed explicitly. When blank, boto3 falls back
+    to its standard credential chain (profile / role / actual env vars).
+    """
+    kwargs: dict = {"region_name": settings.aws_region}
+    if settings.aws_access_key_id and settings.aws_secret_access_key:
+        kwargs["aws_access_key_id"] = settings.aws_access_key_id
+        kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+    return kwargs
+
+
 @lru_cache(maxsize=1)
 def s3_client():
     import boto3
     from botocore.config import Config
 
-    kwargs: dict = {"region_name": settings.aws_region}
+    kwargs = _aws_kwargs()
     if settings.s3_endpoint_url:
         # MinIO (or any S3-compatible endpoint) needs an explicit endpoint and
         # path-style addressing (no virtual-host buckets).
@@ -59,4 +73,4 @@ def s3_client():
 def sqs_client():
     import boto3
 
-    return boto3.client("sqs", region_name=settings.aws_region)
+    return boto3.client("sqs", **_aws_kwargs())

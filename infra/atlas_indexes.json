@@ -2,7 +2,7 @@
   "_comment": "Atlas Vector Search index definitions. numDimensions is overridden at apply time by EMBED_DIM in .env (see infra/create_atlas_index.py). knowledge_v2 is the blue/green target for BackfillWorkflow and typically uses the upgraded model's dimensions.",
   "collections": {
     "knowledge": {
-      "name": "vector_index",
+      "name": "temporalai_search_index",
       "type": "vectorSearch",
       "definition": {
         "fields": [
@@ -18,7 +18,7 @@
       }
     },
     "knowledge_v2": {
-      "name": "vector_index",
+      "name": "temporalai_search_index",
       "type": "vectorSearch",
       "definition": {
         "fields": [

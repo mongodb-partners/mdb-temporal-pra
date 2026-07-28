@@ -1,0 +1,22 @@
+{
+  "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
+  "tasks.max": "1",
+  "topics": "s3-events",
+  "connection.uri": "__MONGODB_URI__",
+  "database": "temporal",
+  "collection": "sources",
+
+  "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false",
+
+  "_comment": "Upsert by the S3 object Key so re-uploading the same file REPLACES its src doc (change stream then re-triggers ingest) instead of inserting a duplicate.",
+  "document.id.strategy": "com.mongodb.kafka.connect.sink.processor.id.strategy.PartialValueStrategy",
+  "document.id.strategy.overwrite.existing": "true",
+  "document.id.strategy.partial.value.projection.type": "AllowList",
+  "document.id.strategy.partial.value.projection.list": "Key",
+  "writemodel.strategy": "com.mongodb.kafka.connect.sink.writemodel.strategy.ReplaceOneDefaultStrategy",
+
+  "errors.tolerance": "all",
+  "errors.log.enable": "true"
+}

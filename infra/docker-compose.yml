@@ -1,105 +1,124 @@
-# Local infra for the Part 1 pipeline: Kafka (Redpanda) + MinIO (S3-compatible source).
+# Local infra for the connector-based ingress.
 # Temporal runs separately via the CLI:  temporal server start-dev
 #
-#   docker compose -f infra/docker-compose.yml up -d
+#   docker compose --env-file .env -f infra/docker-compose.yml up -d
 #
-# MinIO publishes bucket notifications *natively* to the Kafka 's3-events' topic — no SQS.
-# Uploading to the MinIO bucket triggers the whole pipeline.
+# Flow: MinIO (S3) --native events--> Kafka topic 's3-events'
+#       --> MongoDB Sink Connector (Kafka Connect) --> Atlas temporal.sources
+#       --> (Atlas Stream Processing / trigger listener) --> Temporal IngestWorkflow
 #
 # Endpoints:
-#   Kafka bootstrap (host):   localhost:19092   (KAFKA_BOOTSTRAP)
-#   Redpanda Console:         http://localhost:8080
+#   Kafka bootstrap (host):   localhost:29092   (KAFKA_BOOTSTRAP, debugging only)
+#   Kafka Connect REST:       http://localhost:8083
 #   MinIO S3 API (host):      http://localhost:9000   (S3_ENDPOINT_URL)
-#   MinIO Console:            http://localhost:9001   (minioadmin / minioadmin)
+#   MinIO Console:            http://localhost:9001    (minioadmin / minioadmin)
 
-name: temporal-pra
+name: teamporal-app
 
 services:
-  redpanda:
-    image: redpandadata/redpanda:v24.2.7
-    container_name: pra-redpanda
-    command:
-      - redpanda
-      - start
-      - --smp=1
-      - --overprovisioned
-      - --node-id=0
-      - --kafka-addr=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
-      - --advertise-kafka-addr=INTERNAL://redpanda:9092,EXTERNAL://localhost:19092
-      - --pandaproxy-addr=0.0.0.0:8082
-      - --advertise-pandaproxy-addr=localhost:8082
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: temporal-kafka
     ports:
-      - "19092:19092"   # Kafka API (host)
-      - "8082:8082"     # pandaproxy (REST)
-      - "9644:9644"     # admin API
+      - "29092:29092"   # host access (debugging)
+    environment:
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     healthcheck:
-      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 15
+    volumes:
+      - kafka-data:/var/lib/kafka/data
 
-  # One-shot: create the topics so MinIO has 's3-events' to publish to.
-  redpanda-setup:
-    image: redpandadata/redpanda:v24.2.7
-    container_name: pra-redpanda-setup
+  connect:
+    image: confluentinc/cp-kafka-connect:7.6.1
+    container_name: temporal-connect
     depends_on:
-      redpanda:
+      kafka:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - "rpk topic create raw chunks s3-events -p 3 -r 1 --brokers redpanda:9092 || true"
-    restart: "no"
-
-  console:
-    image: redpandadata/console:v2.7.2
-    container_name: pra-redpanda-console
-    depends_on:
-      - redpanda
     ports:
-      - "8080:8080"
+      - "8083:8083"
     environment:
-      KAFKA_BROKERS: redpanda:9092
+      CONNECT_BOOTSTRAP_SERVERS: "kafka:9092"
+      CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
+      CONNECT_GROUP_ID: "temporal-connect"
+      CONNECT_CONFIG_STORAGE_TOPIC: "_connect-configs"
+      CONNECT_OFFSET_STORAGE_TOPIC: "_connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "_connect-status"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+    command:
+      - bash
+      - -c
+      - |
+        echo "Installing MongoDB Kafka connector..."
+        confluent-hub install --no-prompt mongodb/kafka-connect-mongodb:1.13.0
+        echo "Launching Kafka Connect..."
+        /etc/confluent/docker/run
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
 
   minio:
     image: minio/minio:latest
-    container_name: pra-minio
+    container_name: temporal-minio
     command: ["server", "/data", "--console-address", ":9001"]
     depends_on:
-      redpanda:
+      kafka:
         condition: service_healthy
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
       # Native S3 -> Kafka notification target (identifier: PRIMARY).
       MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY: "on"
-      MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY: "redpanda:9092"
+      MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY: "kafka:9092"
       MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY: "s3-events"
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Console
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio-data:/data
 
   # One-shot: create the bucket and subscribe ObjectCreated events to the Kafka target.
   minio-setup:
     image: minio/mc:latest
-    container_name: pra-minio-setup
+    container_name: temporal-minio-setup
     depends_on:
       minio:
         condition: service_started
-      redpanda-setup:
-        condition: service_completed_successfully
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >
         until mc alias set local http://minio:9000 minioadmin minioadmin; do
           echo 'waiting for minio...'; sleep 2;
         done &&
-        mc mb --ignore-existing local/pra-bucket &&
-        mc event add local/pra-bucket arn:minio:sqs::PRIMARY:kafka --event put --ignore-existing &&
-        echo 'MinIO bucket pra-bucket wired to Kafka topic s3-events:' &&
-        mc event list local/pra-bucket
+        mc mb --ignore-existing local/temporal-datasources &&
+        mc event add local/temporal-datasources arn:minio:sqs::PRIMARY:kafka --event put --ignore-existing &&
+        echo 'MinIO bucket temporal-datasources wired to Kafka topic s3-events:' &&
+        mc event list local/temporal-datasources
     restart: "no"
 
 volumes:
+  kafka-data:
   minio-data:

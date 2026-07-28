@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 
 class Settings(BaseSettings):
@@ -19,30 +25,67 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # In local development, prefer values from .env over stale exported shell
+        # variables so repo config changes take effect consistently across restarts.
+        return (
+            init_settings,
+            DotEnvSettingsSource(settings_cls),
+            EnvSettingsSource(settings_cls),
+            file_secret_settings,
+        )
+
     # ---- Temporal ----
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
-    temporal_task_queue: str = "pra-pipeline"
+    temporal_task_queue: str = "temporal-pipeline"
 
-    # ---- Kafka ----
-    kafka_bootstrap: str = "localhost:19092"
-    raw_topic: str = "raw"
-    chunks_topic: str = "chunks"
+    # ---- Kafka (Confluent cp-kafka) + Kafka Connect ----
+    kafka_bootstrap: str = "localhost:9092"
+    kafka_connect_url: str = "http://localhost:8083"
     s3_events_topic: str = "s3-events"  # MinIO publishes native S3 events here
 
     # ---- MongoDB Atlas ----
     mongodb_uri: str = ""
-    mongodb_db: str = "pra"
-    knowledge_collection: str = "knowledge"
-    knowledge_v2_collection: str = "knowledge_v2"
+    mongodb_db: str = "temporal"
+    src_collection: str = "sources"               # sink-connector landing docs (ASP source)
+    chunks_collection: str = "chunks_staging"     # staged chunks between workflow stages
+    knowledge_collection: str = "knowledge"       # searchable embedded chunks (blue)
+    knowledge_v2_collection: str = "knowledge_v2" # blue/green backfill target (green)
+    config_collection: str = "temporal_config"         # cutover active-pointer doc
+    memory_collection: str = "agent_memory"       # deep-agent write-back
+    vector_search_index_name: str = "temporalai_search_index"
 
     # ---- Voyage AI ----
     voyage_api_key: str = ""
-    voyage_model: str = "voyage-3"
+    voyage_model: str = "voyage-3.5"
+    voyage_rerank_model: str = "rerank-2.5"
     embed_dim: int = 1024
+
+    # ---- Anthropic (deep agent) ----
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = ""
+    anthropic_subscription_key: str = ""
+    answer_model: str = "claude-sonnet-4-5"
+
+    # ---- Service ports ----
+    trigger_api_port: int = 8088
+    agent_api_port: int = 8090
 
     # ---- AWS / S3 ----
     aws_region: str = "us-east-1"
+    # Explicit creds (also matches MinIO's minioadmin/minioadmin). Leave blank on real
+    # AWS to fall back to the standard credential chain (profile / role / env).
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
     s3_bucket: str = ""
     sqs_queue_url: str = ""
     # Set to a MinIO endpoint (e.g. http://localhost:9000) to use MinIO instead of AWS S3.

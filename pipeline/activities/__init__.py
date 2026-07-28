@@ -1,15 +1,13 @@
-"""Temporal activities for the Part 1 pipeline."""
+"""Temporal activities for the ingest pipeline."""
 
-from .chunk import chunk_document, is_duplicate
-from .embed_voyage import embed_chunk
-from .produce_chunks import produce_chunks_activity
-from .write_atlas import read_knowledge_batch, upsert_embedded_chunk
+from .backfill import ensure_target_index, reembed_and_write, read_source_batch
+from .ingest import embed_staged_chunk, fetch_and_stage_chunks, index_document
 
 ALL_ACTIVITIES = [
-    chunk_document,
-    is_duplicate,
-    embed_chunk,
-    produce_chunks_activity,
-    upsert_embedded_chunk,
-    read_knowledge_batch,
+    fetch_and_stage_chunks,
+    embed_staged_chunk,
+    index_document,
+    read_source_batch,
+    reembed_and_write,
+    ensure_target_index,
 ]

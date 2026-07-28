@@ -1,6 +1,4 @@
-"""Verification helper: run an Atlas $vectorSearch over the knowledge collection.
-
-Embeds the query with Voyage (input_type=query) and prints the top matches.
+"""Verification helper: $vectorSearch over the active knowledge collection.
 
 Run:  uv run python -m infra.query_atlas "how does resume without re-embed work?"
 """
@@ -9,42 +7,20 @@ from __future__ import annotations
 
 import argparse
 
-from pipeline.clients import knowledge_collection, voyage_client
-from pipeline.config import settings
+from pipeline.config_store import get_active
+from pipeline.retrieval import vector_search
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Vector-search the knowledge collection.")
+    parser = argparse.ArgumentParser(description="Vector-search the active knowledge collection.")
     parser.add_argument("query", help="Natural-language query.")
     parser.add_argument("--k", type=int, default=5, help="Number of results.")
-    parser.add_argument("--collection", default=settings.knowledge_collection)
     args = parser.parse_args()
 
-    qv = voyage_client().embed([args.query], model=settings.voyage_model, input_type="query").embeddings[0]
+    active = get_active()
+    print(f"(active: {active['active_collection']} / {active['active_index']} / {active['model']})")
 
-    coll = knowledge_collection(args.collection)
-    pipeline = [
-        {
-            "$vectorSearch": {
-                "index": "vector_index",
-                "path": "embedding",
-                "queryVector": list(qv),
-                "numCandidates": max(100, args.k * 20),
-                "limit": args.k,
-            }
-        },
-        {
-            "$project": {
-                "_id": 0,
-                "source_uri": 1,
-                "chunk_id": 1,
-                "text": 1,
-                "score": {"$meta": "vectorSearchScore"},
-            }
-        },
-    ]
-
-    results = list(coll.aggregate(pipeline))
+    results = vector_search(args.query, k=args.k)
     if not results:
         print("no results — is data ingested and the index built?")
         return
