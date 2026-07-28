@@ -1,0 +1,105 @@
+# Local infra for the Part 1 pipeline: Kafka (Redpanda) + MinIO (S3-compatible source).
+# Temporal runs separately via the CLI:  temporal server start-dev
+#
+#   docker compose -f infra/docker-compose.yml up -d
+#
+# MinIO publishes bucket notifications *natively* to the Kafka 's3-events' topic — no SQS.
+# Uploading to the MinIO bucket triggers the whole pipeline.
+#
+# Endpoints:
+#   Kafka bootstrap (host):   localhost:19092   (KAFKA_BOOTSTRAP)
+#   Redpanda Console:         http://localhost:8080
+#   MinIO S3 API (host):      http://localhost:9000   (S3_ENDPOINT_URL)
+#   MinIO Console:            http://localhost:9001   (minioadmin / minioadmin)
+
+name: temporal-pra
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    container_name: pra-redpanda
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
+      - --advertise-kafka-addr=INTERNAL://redpanda:9092,EXTERNAL://localhost:19092
+      - --pandaproxy-addr=0.0.0.0:8082
+      - --advertise-pandaproxy-addr=localhost:8082
+    ports:
+      - "19092:19092"   # Kafka API (host)
+      - "8082:8082"     # pandaproxy (REST)
+      - "9644:9644"     # admin API
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: create the topics so MinIO has 's3-events' to publish to.
+  redpanda-setup:
+    image: redpandadata/redpanda:v24.2.7
+    container_name: pra-redpanda-setup
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "rpk topic create raw chunks s3-events -p 3 -r 1 --brokers redpanda:9092 || true"
+    restart: "no"
+
+  console:
+    image: redpandadata/console:v2.7.2
+    container_name: pra-redpanda-console
+    depends_on:
+      - redpanda
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+
+  minio:
+    image: minio/minio:latest
+    container_name: pra-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      # Native S3 -> Kafka notification target (identifier: PRIMARY).
+      MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY: "on"
+      MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY: "redpanda:9092"
+      MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY: "s3-events"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console
+    volumes:
+      - minio-data:/data
+
+  # One-shot: create the bucket and subscribe ObjectCreated events to the Kafka target.
+  minio-setup:
+    image: minio/mc:latest
+    container_name: pra-minio-setup
+    depends_on:
+      minio:
+        condition: service_started
+      redpanda-setup:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        until mc alias set local http://minio:9000 minioadmin minioadmin; do
+          echo 'waiting for minio...'; sleep 2;
+        done &&
+        mc mb --ignore-existing local/pra-bucket &&
+        mc event add local/pra-bucket arn:minio:sqs::PRIMARY:kafka --event put --ignore-existing &&
+        echo 'MinIO bucket pra-bucket wired to Kafka topic s3-events:' &&
+        mc event list local/pra-bucket
+    restart: "no"
+
+volumes:
+  minio-data:
