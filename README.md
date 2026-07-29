@@ -1,324 +1,198 @@
-# MongoDB × Temporal — Partner Reference Architecture (PRA)
+# MongoDB × Temporal — Partner Reference Architecture
 
-This README aligns with the [proposal](https://docs.google.com/document/d/1pReiGwWCwFj28nWsZ6NiCA9nWrqhcaWgF51s_odUeCs/edit?tab=t.0#heading=h.54b4x1c9rtcf) and formalizes it into a
-clean, buildable architecture in **two parts**:
+A production-grade reference implementation that shows how **Temporal** and **MongoDB Atlas** work
+together to build a durable, change-driven RAG pipeline with a deep-agent chat interface.
 
-- **Part 1 — The fresh vector store.** A Temporal-orchestrated, change-driven pipeline that lands
-  operational data into Atlas and embeds it with Voyage — durably and resumably.
-- **Part 2 — The agent that uses it.** A framework-neutral agent that runs vector retrieval over
-  the fresh data **and writes memory back to the same database** — no copy, no lag.
+> **Developers:** see [docs/RUNBOOK.md](docs/RUNBOOK.md) for prerequisites, API key setup,
+> local spin-up, and cloud infra references.
 
 ---
 
-## Table of contents
+## What is Temporal?
 
-- [Why this architecture](#why-this-architecture)
-- [System overview](#system-overview)
-- [Part 1 — The fresh vector store](#part-1--the-fresh-vector-store) - [Data sources → Kafka → Temporal](#data-sources--kafka--temporal) - [Temporal workflows & activities](#temporal-workflows--activities) - [The four durability guarantees](#the-four-durability-guarantees) - [MongoDB Atlas data model](#mongodb-atlas-data-model)
-- [Part 2 — The agent that uses it](#part-2--the-agent-that-uses-it)
-- [How the sketch maps to this design](#how-the-sketch-maps-to-this-design)
-- [Scope & non-goals](#scope--non-goals)
-- [Repo layout](#repo-layout)
-- [Milestones](#milestones)
+[Temporal](https://temporal.io) is a **durable execution platform**. It orchestrates long-running
+workflows as code — with automatic retries, checkpointing, and resume-on-failure built in. You
+write plain Python functions; Temporal ensures they run to completion even across crashes, deploys,
+or network partitions.
+
+In this architecture Temporal owns two critical concerns:
+
+| Concern            | What Temporal guarantees                                                                                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ingestion pipeline | A crash mid-embedding resumes from the last completed chunk — never re-embeds what is already done ([durable execution](https://docs.temporal.io/evaluate/major-advantages#fault-oblivious-code)) |
+| Agent workflows    | Multi-step agent plans are durable; a failure mid-conversation resumes without losing tool results or memory writes ([workflows as code](https://docs.temporal.io/workflows))                     |
 
 ---
 
-## Why this architecture
+## The problem this solves
 
-Customers hand-roll the resilient ingestion/embedding pipeline and it hurts. From the proposal:
+Customers hand-roll resilient ingestion/embedding pipelines and it hurts
+(source: [MongoDB × Temporal proposal](https://docs.google.com/document/d/1pReiGwWCwFj28nWsZ6NiCA9nWrqhcaWgF51s_odUeCs/edit?tab=t.0#heading=h.54b4x1c9rtcf)):
 
-| Customer     | Pain they hand-rolled                                                    |
+| Customer     | Pain hand-rolled without Temporal                                        |
 | ------------ | ------------------------------------------------------------------------ |
 | Regilient AI | MD5 change-tracking in production to decide what to re-embed             |
 | Glassdoor    | A homegrown "lambda clock" cron to generate embeddings                   |
 | Carrier      | A FastAPI pipeline, hand-tuning sequential vs. parallel                  |
 | Emerald X    | A 5-hour import that fails on the last step **reruns the entire import** |
 
-The pattern that removes this pain is already in production at DEA Technology, 100ms, Chess.com,
-and C.R. England (who chose Temporal for agent state because it "handles it a lot better than
-LangGraph natively"). This PRA packages that pattern so any team can fork it.
-
-**The division of responsibility is the whole point:**
-
-| Concern                                                       | Owner             |
-| ------------------------------------------------------------- | ----------------- |
-| Orchestration, retries, checkpointing, backfill, resumability | **Temporal**      |
-| Operational data, vector index, agent memory & state          | **MongoDB Atlas** |
-| Embeddings & reranking                                        | **Voyage AI**     |
+This PRA packages the pattern that removes that pain — already in production at DEA Technology,
+100ms, Chess.com, and C.R. England.
 
 ---
 
-## System overview
+## Partner Solutions Architecture
 
-The original hand-drawn architecture sketch (source of truth for this design):
+### High-level design
 
-![Architecture sketch — Sources → Part 1 (Temporal) → MongoDB Atlas → Part 2 (Agent) → User](docs/images/mongo-temporal-architecture-sketch.png)
+![High-level architecture — Sources → Kafka → Temporal → Atlas → Deep Agent → User](docs/images/mongodb-temporal-hld.png)
 
-Refined into the buildable architecture below:
+**How to read it:**
+
+1. **Data sources** (IoT, S3, RDBMS) feed into **Kafka** via native connectors.
+2. A **Kafka Sink Connector** lands raw records into MongoDB Atlas (`sources` collection).
+3. **Atlas Stream Processing** watches the change stream on `sources` and triggers the Temporal
+   ingest workflow.
+4. **Temporal** chunks the content, calls **Voyage AI** for embeddings, and upserts into
+   **Atlas Search**.
+5. A **Deep Agent** (FastAPI + React) runs vector search over the fresh knowledge and streams
+   answers to the user.
+
+> **Serverless option:** Atlas Stream Processing's `$https` invocation pairs naturally with
+> [Temporal Serverless Workers on AWS Lambda](https://temporal.io/blog/introducing-temporal-serverless-workers-deploy-temporal-workers-to-aws-lambda)
+> — ASP fires the `$https` trigger, Lambda spins up a Temporal worker on demand, and the
+> `IngestWorkflow` runs to completion with full durability. No always-on worker process required.
+
+### Division of responsibility
+
+| Concern                                                       | Owner                 |
+| ------------------------------------------------------------- | --------------------- |
+| Orchestration, retries, checkpointing, backfill, resumability | **Temporal**          |
+| Operational data, vector index, agent memory & state          | **MongoDB Atlas**     |
+| Embeddings & reranking                                        | **MongoDB Voyage AI** |
+| Answer synthesis                                              | **Anthropic Claude**  |
+
+---
+
+## System architecture
 
 ```mermaid
 flowchart LR
 
-    %% ---------- PART 1: Temporal SDK pipeline ----------
-    subgraph P1["PART 1 — Fresh Vector Store · Temporal SDK"]
-        direction TB
-        KAFKA[["Kafka<br/>(streaming ingestion)"]]
-        subgraph WF["Temporal Workflows (durable · resumable)"]
-            direction TB
-            CHUNK["Chunk<br/>content-hash dedupe"]
-            EMBED["Embed + Write<br/>Voyage embeddings → BSON"]
-            BACKFILL["Backfill<br/>re-embed on model upgrade"]
-            CHUNK --> EMBED
-        end
-        VOYAGE(["Voyage AI<br/>embed + rerank"])
-
-        KAFKA -->|raw records / file URLs| CHUNK
-        EMBED <-->|"embed()"| VOYAGE
-        BACKFILL <-->|"re-embed()"| VOYAGE
+    subgraph SRC["Operational Sources  ·  plug in any Kafka-compatible source"]
+        MINIO["MinIO / S3\n(demo — temporal-datasources)"]
+        OTHERS["RDBMS · IoT · MongoDB\nKafka topic · ..."]
     end
 
-    %% ---------- MongoDB Atlas (center of gravity) ----------
+    subgraph KAFKA_LAYER["Kafka streaming layer"]
+        KAFKA[["Kafka\ns3-events topic"]]
+        SINK["MongoDB Sink Connector\n(Kafka Connect)"]
+        KAFKA --> SINK
+    end
+
     subgraph ATLAS["MongoDB Atlas — single source of truth"]
-        direction TB
-        KB[("knowledge<br/>docs + chunks + embeddings")]
-        VS{{Vector Search Index}}
-        MEM[("agent_memory<br/>& state")]
-        KB --- VS
+        SRC_C[("sources")]
+        STG[("chunks_staging")]
+        KB[("knowledge\n+ vector_index")]
+        KB2[("knowledge_v2\n+ vector_index")]
+        CFG[("temporal_config\nactive pointer")]
+        MEM[("agent_memory")]
     end
 
-    %% ---------- PART 2: framework-neutral agent ----------
-    subgraph P2["PART 2 — Agent (ref: LangChain DeepAgents) · Temporal SDK"]
-        direction TB
-        AGENT["Agent Workflow<br/>Skills + AGENTS.md"]
-        KAGT["Knowledge sub-agent<br/>vector retrieval + rerank"]
-        MAGT["Memory sub-agent<br/>read / write state"]
-        AGENT --> KAGT
-        AGENT --> MAGT
+    subgraph TRIG["Trigger"]
+        ASP["Atlas Stream Processing\n($https)  ·or·  trigger_listener (dev)"]
     end
 
-    %% ---------- Sources  ----------
-    subgraph SRC["Operational Sources"]
-        direction TB
-        SRCLIST["mysql / RDBMS<br/>S3 / files<br/>IoT<br/>Kafka topic<br/>MongoDB"]
+    subgraph TW["Temporal — IngestWorkflow"]
+        S1["1  fetch S3 + factory chunk\n(md / pdf / csv)"]
+        S2["2  embed each chunk\n(Voyage AI)"]
+        S3["3  create / UPDATE index"]
+        S1 --> S2 --> S3
     end
 
-    UI["Chat UI · Streamlit"]
-    USER([User])
+    subgraph BF["Backfill — model upgrade"]
+        BFW["BackfillWorkflow\nre-embed → knowledge_v2"]
+        CUT["cutover\nflip active pointer"]
+    end
 
-    %% ---------- spine edges (left → right) ----------
-    SRC -->|"Atlas Stream Processing / change-stream / files"| KAFKA
-    EMBED -->|"upsert embedded docs"| KB
-    VS -->|"read knowledge + memory"| KAGT
-    MAGT -->|"persist memory"| MEM
-    P2 --> UI
-    UI --> USER
+    subgraph AGENT["Deep Agent"]
+        API["FastAPI /query"]
+        UI["React UI\n:5173"]
+    end
 
-    %% ---------- backfill loop: read Atlas → re-embed → write back ----------
-    KB -.->|"read already-embedded docs<br/>(direct or via Kafka)"| BACKFILL
-    BACKFILL -.->|"rewrite re-embedded docs"| KB
+    MINIO -->|S3 event| KAFKA
+    OTHERS -.->|stream events| KAFKA
+    SINK -->|upsert by key| SRC_C
+    SRC_C -->|change stream| ASP
+    ASP -->|start IngestWorkflow| S1
+    S1 -->|persist chunks| STG
+    STG --> S2
+    S3 -->|upsert · prune stale| KB
+    KB -.->|read| BFW
+    BFW -.->|write| KB2
+    KB2 -.-> CUT
+    CUT -.-> CFG
+    UI --> API
+    API -->|read active| CFG
+    API -->|vector search + rerank| KB
+    API -->|answer + memory| MEM
 ```
 
-**How to read it (left → right):**
-
-1. **Sources** feed a **Kafka** streaming layer inside Part 1.
-2. **Part 1 (Temporal SDK)** chunks, embeds with **Voyage**, serializes to BSON, and **writes to
-   Atlas** — durably and resumably (a crash resumes without re-embedding finished chunks).
-3. **MongoDB Atlas** is the single store: `knowledge` + `temporalai_search_index` for retrieval and
-   `agent_memory` for state — the read side and write side share one database.
-4. **Part 2** agent reads the fresh knowledge for retrieval and **writes memory back** to the same
-   Atlas, streaming answers to the **User** via Streamlit.
-
-The **backfill** loop (dashed) is intentionally _not_ a re-ingestion from source: on a model
-upgrade (e.g. Voyage 3 → 4) the `BackfillWorkflow` **reads the already-embedded documents from
-Atlas** (directly or re-streamed through Kafka), **re-embeds** them, and **rewrites them back to
-Atlas** — no source replay, no lost progress.
-
----
-
-## Part 1 — The fresh vector store
-
-A Temporal-orchestrated pipeline that moves data from operational sources into Atlas and embeds it
-with Voyage. It demonstrates Temporal's **durable execution** while staying a _generic_ reference
-(MongoDB auto-embedding is noted as an alternative to the explicit Voyage Embedding/Reranking API).
-
-### Data sources → Kafka → Temporal
-
-The flow (matching the sketch) is: **all sources feed into a Kafka streaming layer, then Temporal
-consumes from Kafka** to chunk, embed, and store into Atlas.
+### Atlas data model
 
 ```text
-mysql (RDBMS) ┐
-S3            │
-IoT           ├──▶  Kafka (streaming ingestion)  ──▶  Temporal Ingest Workflow  ──▶  Atlas
-Kafka topic   │
-MongoDB       ┘
+Database: temporal
+├── sources              ← raw S3 event records (written by Kafka Sink Connector)
+├── chunks_staging       ← intermediate chunks during IngestWorkflow
+├── knowledge            ← embedded docs + Atlas Vector Search index (active)
+├── knowledge_v2         ← BackfillWorkflow writes here on model upgrade (blue/green)
+├── temporal_config      ← active collection/index pointer (flipped by cutover)
+└── agent_memory         ← agent state, memory, citations (written by Deep Agent)
 ```
 
-**Why Kafka sits inside Part 1:** Kafka is everywhere in the target accounts (SoFi has a live
-Kafka→Mongo vector need; also TSYS, US LBM, Schneider). It is part of the pipeline, used in **two
-places**:
-
-1. A **raw topic** that all sources feed into — Temporal's Chunk Workflow consumes it.
-2. A **chunks topic** that the Chunk Workflow **writes chunks back to** — so every chunk is durably
-   queued and **guaranteed to be processed** by the Embed + Write Workflow, even across restarts.
-
-Temporal owns everything: consume raw → chunk → write chunks back to Kafka → consume chunks → embed
-→ serialize → write to Atlas.
-
-**Connector priority (proposal):**
-
-1. **Kafka first** — the demo's primary streaming source. Part 1 connects to Kafka first.
-2. **Atlas Stream Processing second** — MongoDB Atlas Stream Processing reads change streams from
-   Atlas (and other sources) and produces records _onto Kafka topics_, replacing the need for an
-   external Debezium connector.
-3. **Snowflake later.**
-
-> **Aligned with sketch:** sources → **Kafka raw topic** → **Temporal chunks** → **chunks written
-> back to Kafka** → **Temporal embeds + stores to Atlas**. Kafka lives inside Part 1. Incremental
-> sync is achieved by Atlas Stream Processing change-stream events arriving as Kafka records plus
-> content-hash dedupe in the Chunk Workflow.
-
-### Temporal workflows & activities
-
-The sketch's activity bar becomes named workflows built from small, **idempotent, checkpointed
-Temporal SDK activities**, with Kafka used as a durable hand-off between chunking and embedding:
-
-```mermaid
-sequenceDiagram
-    participant RAW as Kafka: raw topic
-    participant CW as Chunk Workflow
-    participant CHK as Kafka: chunks topic
-    participant EW as Embed + Write Workflow
-    participant DB as MongoDB Atlas
-
-    RAW->>CW: consume raw records / file URLs
-    CW->>CW: compute content hash, skip unchanged
-    CW->>CW: chunk(payload)
-    CW->>CHK: write chunks back to Kafka (guaranteed processing)
-    CHK->>EW: consume chunks
-    EW->>EW: embed(chunks) via Voyage  %% metered, expensive
-    Note over EW: resume here on failure —<br/>already-embedded chunks are NOT re-embedded
-    EW->>DB: serialize BSON + upsert to knowledge collection + vector index
-```
-
-#### Workflows
-
-- **`ChunkWorkflow`** — **consumes the raw Kafka topic** (records may originate from RDBMS, S3, IoT,
-  MongoDB, or Atlas Stream Processing). Applies content-hash dedupe, chunks the payload, and
-  **writes chunks back to a Kafka `chunks` topic**. This decouples the cheap chunking step from the
-  expensive embedding step and guarantees every chunk is processed even across restarts.
-- **`EmbedWriteWorkflow`** — **consumes the `chunks` topic**, embeds each chunk via Voyage,
-  serializes to BSON, and upserts to the Atlas knowledge collection + vector index. Emits
-  `Intermediate states` as workflow history so a crash resumes without re-embedding done chunks.
-- **`BackfillWorkflow`** — a **first-class** workflow triggered by a model-version change (e.g.
-  **Voyage 3 → 4**, which changes vector dimensions). It **reads the existing documents already in
-  Atlas, re-embeds them, and rewrites them back to Atlas** — no re-ingestion from source, no lost
-  progress.
-
-### The four durability guarantees
-
-These are the proposal's headline value props. The design makes each one explicit:
-
-| #   | Guarantee                            | How it's implemented                                                                                                                                                                                                                                           |
-| --- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Multiple sources**                 | All sources (RDBMS, S3, IoT, Kafka topic, MongoDB, Atlas Stream Processing) feed the **Kafka raw topic**; `ChunkWorkflow` consumes it — all land in MongoDB.                                                                                                   |
-| 2   | **Incremental, change-driven sync**  | Atlas Stream Processing change-stream records on Kafka + content-hash dedupe → only what changed is reprocessed (replaces Regilient's hand-rolled MD5, Glassdoor's cron).                                                                                      |
-| 3   | **Durable, resumable execution**     | Chunks are **written back to a Kafka `chunks` topic** and workflow history checkpoints each activity. A failure at hour 4 resumes from the last step and **does not re-embed** the 3 hours already done — embedding is metered (fixes Emerald X's full-rerun). |
-| 4   | **Backfill as first-class workflow** | `BackfillWorkflow` **reads existing Atlas data, re-embeds, and rewrites to Atlas** for dimension-changing model upgrades (Voyage 3→4) — durable, progress preserved.                                                                                           |
-
-### MongoDB Atlas data model
-
-```text
-Atlas Database: temporal
-├── knowledge            # source docs + chunks + Voyage embeddings (BSON)
-│     └── temporalai_search_index   # Atlas Vector Search index over `embedding`
-├── knowledge_v2         # BackfillWorkflow reads `knowledge`, re-embeds, rewrites here (blue/green)
-└── agent_memory         # Part 2 writes here: memory, intermediate results, learned prefs
-```
-
-Key property from the proposal: **the agent writes back into the same database the retrieval reads
-from** — `agent_memory` lives beside `knowledge`. _No copy, no lag._
+The agent **writes memory back into the same database the retrieval reads from** — no copy, no lag.
 
 ---
 
-## Part 2 — The agent that uses it
+## Quickstart (local demo)
 
-A **framework-neutral** agent runs vector search and retrieval over the fresh data. Temporal
-orchestrates the multi-step agent; MongoDB persists its state and memory. Critically, the agent
-**does not only read — it writes back**: memory, intermediate results, and learned preferences land
-in the same DB the retrieval reads from.
+```bash
+# 1. Clone and enter the repo
+git clone https://github.com/suresharam/mongodb-temporal-sa-pra.git
+cd mongodb-temporal-sa-pra
 
-The sketch's **LangChain DeepAgents** application is kept as the **reference implementation**, but
-behind a neutral boundary so the repo can swap frameworks (the proposal explicitly calls for a
-framework-neutral agent; the agent framework is "to be named").
+# 2. Copy and fill in credentials
+cp .env.example .env
+# Edit .env: set MONGODB_URI, VOYAGE_API_KEY, ANTHROPIC_API_KEY
 
-```mermaid
-flowchart TB
-    subgraph AGENT["Agent (reference impl: LangChain DeepAgents)"]
-        direction TB
-        MD["AGENTS.md — what it needs to do"]
-        SK["Skills — github.com/mongodb/agent-skills"]
-        subgraph SUBS[Sub-agents]
-            SA1[Sub-agent 1 · Memory agent]
-            SA2[Sub-agent 2 · Knowledge agent]
-        end
-    end
+# 3. Install all dependencies (Python + UI)
+make setup
 
-    subgraph ATLAS[MongoDB Atlas]
-        VS{{Vector Search Index}}
-        MEM[(agent_memory)]
-    end
+# 4. Start everything (Kafka, Connect, MinIO, Temporal, worker, agent API + UI)
+make start
 
-    UI[Streamlit Chat UI] --> AGENT
-    AGENT --> UI
-    SA2 -->|read knowledgebase + mem| VS
-    SA1 -->|persist memory| MEM
-    AGENT --> USER([User])
+# 5. Create the Atlas Vector Search index (one-time)
+make index
+
+# 6. Seed a sample document to trigger the full pipeline
+make seed
+
+# 7. Open the agent UI
+open http://localhost:5173
+
+# 8. Tear everything down
+make stop
 ```
 
-- **Knowledge sub-agent** → runs Atlas Vector Search (+ optional Voyage reranking) over `knowledge`.
-- **Memory sub-agent** → reads/writes `agent_memory` (durable across turns, orchestrated by Temporal).
-- **Skills / AGENTS.md** → declarative capabilities (from `github.com/mongodb/agent-skills`).
-- **Chat UI** → Streamlit, streaming responses to the User.
+`make help` lists all available targets.
 
-> **Why Temporal here too:** C.R. England chose Temporal for agent state because it "handles it a
-> lot better than LangGraph natively." The agent's multi-step plan is a durable workflow, so a
-> mid-conversation failure resumes without losing tool results or memory writes.
-
----
-
-## How the sketch maps to this design
-
-| Sketch element                                      | Aligned design                                                                                    | Change / rationale                                      |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Source: mysql, S3, IoT, Kafka topic, MongoDB        | Same sources, all **feeding into Kafka** streaming layer                                          | Matches sketch: sources funnel through Kafka            |
-| Kafka box                                           | Moved **inside Part 1**; two topics — raw + chunks                                                | Chunks written back to Kafka for guaranteed processing  |
-| "Temporal SDK + Atlas Stream Processing" bar        | `ChunkWorkflow` + `EmbedWriteWorkflow` (Temporal SDK) + Atlas Stream Processing for change events | Makes durability/resume explicit                        |
-| `chunk → Embed(VAI) → BSON → write Collection_1`    | Chunk → **Kafka chunks topic** → embed → BSON → write `knowledge`, checkpointed                   | Adds Kafka hand-off + content-hash dedupe (no re-embed) |
-| "Intermediate states" label                         | Temporal **workflow history**                                                                     | This _is_ the resumability guarantee                    |
-| "Embedded Data + backfill"                          | `BackfillWorkflow` **reads Atlas → re-embed → rewrite Atlas**                                     | Backfill re-embeds existing Atlas data, not source      |
-| MongoDB AI / Voyage Embeddings                      | Voyage Embedding + Reranking API                                                                  | Note MongoDB auto-embedding as alternative              |
-| Atlas DB: Collection_1, Memory, Vector Search Index | `knowledge`, `agent_memory`, `temporalai_search_index`                                            | Same DB for read + write — no copy, no lag              |
-| LangChain DeepAgent Application                     | Reference impl behind **framework-neutral** boundary                                              | Proposal mandates framework neutrality                  |
-| Sub agent_1 memory / Sub agent_2 knowledge          | Memory sub-agent / Knowledge sub-agent                                                            | Unchanged                                               |
-| Chat UI Streamlit → User                            | Unchanged                                                                                         | —                                                       |
-
----
-
-## Scope & non-goals
-
-### In scope
-
-- **Part 1:** Kafka + API source, Atlas Stream Processing change-stream incremental sync, Voyage embedding,
-  resume-without-re-embed, model-version backfill.
-- **Part 2:** framework-neutral agent, vector retrieval, agent state in MongoDB under Temporal.
-- Shipped as a **public, forkable repo** + live demo.
-
-**Non-goals** (explicit in the proposal)
-
-- A connector framework.
-- MongoDB as self-hosted Temporal persistence.
-- MongoDB as a Temporal visibility / search augmentation.
+| Service           | URL                   | Login                                          |
+| ----------------- | --------------------- | ---------------------------------------------- |
+| Agent chat UI     | http://localhost:5173 |                                                |
+| Temporal Web UI   | http://localhost:8233 |                                                |
+| Agent API         | http://localhost:8090 |                                                |
+| MinIO console     | http://localhost:9001 | username: `minioadmin`, password: `minioadmin` |
+| Kafka Connect API | http://localhost:8083 |                                                |
 
 ---
 
@@ -327,46 +201,35 @@ flowchart TB
 ```text
 mongodb-temporal-sa-pra/
 ├── README.md
-├── Makefile
+├── Makefile                        ← all dev commands (make help)
+├── pyproject.toml                  ← Python deps managed by uv
+├── .env.example                    ← copy → .env, fill credentials
 ├── agent/
-│   ├── api.py                      # FastAPI deep-agent backend
-│   ├── retrieval.py                # vector retrieval + rerank + answer synthesis
-│   └── ui/                         # React/Vite deep-agent UI
+│   ├── api.py                      ← FastAPI deep-agent backend (:8090)
+│   ├── retrieval.py                ← vector search + rerank + Claude answer
+│   └── ui/                         ← React/Vite chat UI (:5173)
 ├── pipeline/
-│   ├── activities/
-│   │   ├── ingest.py               # fetch + stage + embed + index document flow
-│   │   └── backfill.py             # re-embed into green collection
-│   ├── extractors/                 # md / mdx-text / pdf / csv / text extraction
+│   ├── worker.py                   ← Temporal worker process
+│   ├── trigger_listener.py         ← local change-stream trigger shim (dev)
+│   ├── trigger_api.py              ← ASP $https trigger endpoint (production)
 │   ├── workflows/
-│   │   ├── ingest_workflow.py      # ingest one source object into knowledge
-│   │   └── backfill_workflow.py    # backfill active collection into knowledge_v2
-│   ├── config_store.py             # active collection/index pointer
-│   ├── retrieval.py                # shared Atlas vector search
-│   ├── search_index.py             # idempotent search index management
-│   ├── seed.py                     # upload a sample/local file to trigger ingestion
-│   ├── seed_repo.py                # clone/upload markdown docs with throttling
-│   ├── trigger.py                  # shared workflow trigger logic
-│   ├── trigger_api.py              # ASP-facing ingest trigger endpoint
-│   ├── trigger_listener.py         # local change-stream trigger shim
-│   └── worker.py                   # Temporal worker
+│   │   ├── ingest_workflow.py      ← IngestWorkflow: fetch → chunk → embed → index
+│   │   └── backfill_workflow.py    ← BackfillWorkflow: re-embed → knowledge_v2
+│   ├── activities/
+│   │   ├── ingest.py               ← fetch + stage + embed + index activities
+│   │   └── backfill.py             ← re-embed activity
+│   ├── extractors/                 ← md / pdf / csv / text extractors
+│   ├── config_store.py             ← active collection/index pointer
+│   └── search_index.py             ← idempotent Atlas Vector Search management
 └── infra/
-    ├── atlas_indexes.json          # temporalai_search_index definitions
-    ├── connectors/mongo-sink.json  # Kafka Connect -> temporalai.sources
-    └── docker-compose.yml          # Kafka + Connect + MinIO local infra
+    ├── docker-compose.yml          ← Kafka + Connect + MinIO (local dev)
+    ├── connectors/mongo-sink.json  ← Kafka Connect → temporal.sources
+    ├── atlas_indexes.json          ← Vector Search index definitions
+    └── asp/README.md               ← Atlas Stream Processing setup (production)
 ```
 
 ---
 
-## Milestones
+## Developer guide
 
-| Date             | Deliverable                    |
-| ---------------- | ------------------------------ |
-| **Jul 21, 2026** | Initial Design (this document) |
-| **Jul 28, 2026** | Draft Implementation           |
-| **Aug 3, 2026**  | Review                         |
-| **Aug 10, 2026** | Complete demo                  |
-| **Aug 13, 2026** | `.Local` SF event              |
-
-**Resourcing:** Suresh Ramappa (MongoDB co-builder), Cornelia (Temporal point), Benjamin Flast &
-Tasha Loven (MongoDB technical). Architecture input from AEs on live accounts (Abbie Wolfe, Peter W
-Harris). Optional design partner: DEA Technology, 100ms, C.R. England, or SoFi (live Kafka→Mongo need).
+Follow **[docs/RUNBOOK.md](docs/RUNBOOK.md)** for setup instructions

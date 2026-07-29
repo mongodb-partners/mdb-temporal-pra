@@ -1,150 +1,438 @@
-# Runbook — Connector ingress → Temporal ingest → deep-agent UI
+# Runbook — Developer Setup Guide
 
-End-to-end flow:
+Everything a new developer needs to spin up this repo locally and understand the production
+cloud setup.
 
-> **Upload to S3 → Kafka → MongoDB Sink Connector → `sources` → (Atlas Stream
-> Processing / trigger) → Temporal `IngestWorkflow` (fetch + factory-chunk → embed → index)
-> → Atlas Search.** A deep agent (FastAPI + React) queries it.
+---
 
-## Quickstart (Makefile)
+## Table of contents
 
-Self-contained demo (MinIO stands in for S3; no AWS). `make help` lists all targets.
+- [Prerequisites](#prerequisites)
+- [1. MongoDB Atlas setup](#1-mongodb-atlas-setup)
+- [2. Voyage AI API key](#2-voyage-ai-api-key)
+- [3. Anthropic API key](#3-anthropic-api-key)
+- [4. Environment configuration](#4-environment-configuration)
+- [5. Local setup (make setup)](#5-local-setup-make-setup)
+- [6. Local Docker infra — Kafka + MinIO](#6-local-docker-infra--kafka--minio)
+- [7. Run the full stack](#7-run-the-full-stack)
+- [8. Verify ingestion](#8-verify-ingestion)
+- [9. Backfill + model cutover](#9-backfill--model-cutover)
+- [10. Atlas Stream Processing (production trigger)](#10-atlas-stream-processing-production-trigger)
+- [Cloud infra references](#cloud-infra-references)
 
-```bash
-cp .env.example .env       # fill MONGODB_URI, VOYAGE_API_KEY, ANTHROPIC_API_KEY
-make start                 # deps + infra (Kafka+Connect+MinIO, sink connector) + Temporal + worker + trigger-listener + agent-api
-make seed                  # upload a sample file -> ingested automatically
-make agent-ui              # React UI at http://localhost:5173
-make stop                  # tear everything down
-```
-
-`make seed FILE=./doc.pdf KEY=docs/doc.pdf` ingests your own file (md / pdf / csv / text).
-The Atlas Vector Search index is created automatically by the workflow; `make index` can
-pre-create it. `make start` reuses an existing Temporal on :7233 and backgrounds processes
-to `.local/*.log` (`make app-logs`).
-
-## Architecture (current setup)
-
-```mermaid
-flowchart LR
-    USER([User / file upload])
-
-    subgraph SYNC["Auto data sync — managed connectors"]
-        direction TB
-        MINIO["MinIO / S3<br/>(temporal-datasources)"]
-        KAFKA[["Kafka topic<br/>s3-events"]]
-        SINK["MongoDB Sink Connector<br/>(Kafka Connect)"]
-        MINIO -->|native S3 event| KAFKA
-        KAFKA --> SINK
-    end
-
-    subgraph ATLAS["MongoDB Atlas"]
-        direction TB
-        SRC[("sources")]
-        STG[("chunks_staging")]
-        KB[("knowledge (+ vector_index)")]
-        KB2[("knowledge_v2 (+ vector_index)")]
-        CFG[("temporal_config · active pointer")]
-        MEM[("agent_memory")]
-    end
-
-    SINK -->|upsert by S3 key| SRC
-
-    subgraph TRIG["Trigger"]
-        ASP["Atlas Stream Processing<br/>($https)  ·or·  trigger_listener (dev)"]
-    end
-    SRC -->|change stream| ASP
-
-    subgraph TW["Temporal — IngestWorkflow"]
-        direction TB
-        S1["1 fetch S3 + factory chunk<br/>(md / pdf / csv)"]
-        S2["2 embed each chunk (Voyage)"]
-        S3["3 create / UPDATE index"]
-        S1 --> S2 --> S3
-    end
-    ASP -->|start IngestWorkflow| S1
-    S1 -->|persist chunks| STG
-    STG --> S2
-    S3 -->|upsert · prune stale| KB
-
-    subgraph BF["Backfill on model change"]
-        BFW["BackfillWorkflow<br/>re-embed -> knowledge_v2"]
-        CUT["cutover.py<br/>flip active pointer"]
-    end
-    KB -.->|read| BFW
-    BFW -.->|write| KB2
-    KB2 -.-> CUT
-    CUT -.-> CFG
-
-    subgraph AGENT["Deep agent"]
-        API["FastAPI /query"]
-        UI["React UI"]
-    end
-    UI --> API
-    API -->|read active| CFG
-    API -->|vector search + rerank| KB
-    API -->|answer + memory| MEM
-    USER --> UI
-    USER -->|upload| MINIO
-```
+---
 
 ## Prerequisites
 
-- `uv` (repo pins CPython 3.12), Docker, and the `temporal` CLI.
-- MongoDB Atlas cluster (`MONGODB_URI`), Voyage key (`VOYAGE_API_KEY`), Anthropic key
-  (`ANTHROPIC_API_KEY`, for RAG answers — retrieval works without it).
-- Atlas must allow connections from this machine **and** from the Kafka Connect container
-  (same NAT public IP) so the sink can write `sources`.
+Install these tools before running anything:
 
-## Components
+| Tool               | Version | Install                                                                                                              |
+| ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| **uv**             | latest  | `curl -LsSf https://astral.sh/uv/install.sh \| sh` — [docs](https://docs.astral.sh/uv/getting-started/installation/) |
+| **Docker Desktop** | ≥ 4.x   | [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)                                |
+| **Temporal CLI**   | latest  | `brew install temporal` or [docs.temporal.io/cli](https://docs.temporal.io/cli)                                      |
+| **Node.js**        | ≥ 20    | `brew install node` or [nodejs.org](https://nodejs.org/)                                                             |
+| **mongosh**        | latest  | `brew install mongosh` — needed for Atlas Stream Processing setup                                                    |
 
-| Piece              | Where                                                                                        | Role                                             |
-| ------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| S3 listener        | MinIO native Kafka notify                                                                    | file upload → `s3-events` topic                  |
-| Sink connector     | `infra/connectors/mongo-sink.json` (registered by `infra/register_connector.py`)             | `s3-events` → `temporal.sources` (upsert by key) |
-| Trigger            | `pipeline/trigger_api.py` (ASP `$https`) / `pipeline/trigger_listener.py` (dev)              | `sources` change → start `IngestWorkflow`        |
-| IngestWorkflow     | `pipeline/workflows/ingest_workflow.py`                                                      | fetch → factory chunk → embed → index            |
-| Extractor factory  | `pipeline/extractors/`                                                                       | md / pdf / csv / text                            |
-| Backfill + cutover | `pipeline/workflows/backfill_workflow.py`, `pipeline/cutover.py`, `pipeline/config_store.py` | re-embed → `knowledge_v2` → flip active pointer  |
-| Deep agent         | `agent/api.py`, `agent/retrieval.py`, `agent/ui/`                                            | vector search → rerank → Claude answer + memory  |
-
-## Verify ingestion
+Verify:
 
 ```bash
-make connector-status          # sink connector should be RUNNING
-make seed FILE=./thing.pdf KEY=docs/thing.pdf
-# watch Temporal UI (http://localhost:8233): IngestWorkflow Completed
-make query Q="something in that file"
+uv --version
+docker --version
+temporal --version
+node --version
 ```
 
-Confirm `temporal.sources` got a doc (sink) and `knowledge` got embedded chunks.
+---
 
-## Update-in-place (re-upload)
+## 1. MongoDB Atlas setup
 
-Re-upload the same key with edited content → the sink replaces the `sources` doc →
-`IngestWorkflow` re-runs and **updates** the doc's chunks (upsert by `chunk_id`, stale
-ordinals pruned), no duplicates.
+### Create a free cluster
 
-## Backfill + cutover (embedding-model change)
+1. Sign up or log in at [cloud.mongodb.com](https://cloud.mongodb.com).
+2. Create a new **M0 free cluster** (or any tier) in a region close to you.
+3. Docs: [Create a Cluster](https://www.mongodb.com/docs/atlas/tutorial/create-new-cluster/)
+
+### Create a database user
+
+1. In the Atlas UI: **Security → Database Access → Add New Database User**.
+2. Choose **Password** auth. Note the username and password.
+3. Grant **Atlas Admin** role (or at minimum `readWriteAnyDatabase`).
+4. Docs: [Configure Database Users](https://www.mongodb.com/docs/atlas/security-add-mongodb-users/)
+
+### Allow network access
+
+The Kafka Connect container uses your machine's public IP to reach Atlas. You need to allow:
+
+- Your **local machine IP** (for Python scripts).
+- **0.0.0.0/0** temporarily while testing, or your NAT public IP for the Docker network.
+
+Steps: **Security → Network Access → Add IP Address**.
+
+Docs: [Configure IP Access List](https://www.mongodb.com/docs/atlas/security/ip-access-list/)
+
+### Get the connection string
+
+1. **Database → Connect → Drivers** → copy the `mongodb+srv://` URI.
+2. Replace `<username>` and `<password>` with the credentials you created above.
+
+The URI will look like:
+
+```
+mongodb+srv://myuser:mypass@mycluster.abc12.mongodb.net/?retryWrites=true&w=majority
+```
+
+---
+
+## 2. Voyage AI API key
+
+Voyage AI is available directly through **MongoDB Atlas Models** — no separate Voyage AI account
+required.
+
+1. In the Atlas UI go to **Services → Atlas Models** (or search "Models" in the left nav).
+2. Select **Voyage AI** from the provider list and click **Generate API Key**.
+3. Copy the key — it will only be shown once.
+4. The default model used is `voyage-3.5` (1024 dimensions).
+5. Docs: [Atlas Models — Voyage AI](https://www.mongodb.com/docs/atlas/ai-integrations/)
+
+---
+
+## 3. Anthropic API key
+
+Anthropic Claude is used by the deep agent to synthesize answers from retrieved chunks.
+
+1. Sign up at [console.anthropic.com](https://console.anthropic.com/).
+2. Go to **API Keys** and create a new key.
+3. The default model is `claude-sonnet-4-5`. Retrieval still works without this key; only
+   answer synthesis requires it.
+4. Docs: [Anthropic API docs](https://docs.anthropic.com/en/api/getting-started)
+
+---
+
+## 4. Environment configuration
 
 ```bash
-make backfill MODEL=voyage-3-large            # re-embed active collection -> knowledge_v2 (+ new index)
-# wait for BackfillWorkflow Completed and the knowledge_v2 index to be READY
-make cutover TO=knowledge_v2                  # flip temporal_config active pointer (blue/green)
-make query Q="…"                              # now served from knowledge_v2 / voyage-3-large
+cp .env.example .env
 ```
 
-## Deep agent + UI
+Open `.env` and fill in the required values:
 
 ```bash
-make agent-api      # FastAPI on :8090  (POST /query, GET /health)
-make agent-ui       # React (Vite) on :5173, proxies /query to the API
+# REQUIRED — fill these in
+MONGODB_URI=mongodb+srv://<user>:<pass>@<cluster>.mongodb.net/?retryWrites=true&w=majority
+VOYAGE_API_KEY=<your-voyage-api-key>
+ANTHROPIC_API_KEY=<your-anthropic-api-key>
 ```
 
-The UI shows the synthesized answer (with citations) plus ranked source chunks; each query
-is written to `agent_memory`.
+The remaining defaults work as-is for local development (Kafka on `localhost:29092`, MinIO on
+`localhost:9000`, Temporal on `localhost:7233`).
 
-## Production trigger (Atlas Stream Processing)
+For real AWS S3 instead of local MinIO:
 
-`trigger_listener.py` is the local shim. In production, ASP watches `sources` and
-`$https`-POSTs to `trigger_api.py` (`/ingest-trigger`). See `infra/asp/README.md`.
+```bash
+# Comment out S3_ENDPOINT_URL and set real values:
+# S3_ENDPOINT_URL=http://localhost:9000   ← remove this line
+S3_BUCKET=your-real-s3-bucket
+AWS_ACCESS_KEY_ID=<real-key>
+AWS_SECRET_ACCESS_KEY=<real-secret>
+AWS_REGION=us-east-1
+```
+
+---
+
+## 5. Local setup (make setup)
+
+Install Python and UI dependencies in one command:
+
+```bash
+make setup
+```
+
+This runs:
+
+- `uv sync` — installs Python 3.12 + all dependencies from `pyproject.toml`
+- `npm install` in `agent/ui/` — installs the React/Vite frontend
+
+To install separately:
+
+```bash
+make install        # Python only
+cd agent/ui && npm install   # UI only
+```
+
+---
+
+## 6. Local Docker infra — Kafka + MinIO
+
+The local demo replaces production Kafka (Confluent Cloud / MSK) and S3 with:
+
+| Production                     | Local substitute              | Purpose                              |
+| ------------------------------ | ----------------------------- | ------------------------------------ |
+| Confluent Cloud / Apache Kafka | **cp-kafka** (Docker)         | Streaming ingestion + Sink Connector |
+| AWS S3                         | **MinIO** (Docker)            | Object storage for files             |
+| Kafka Connect (managed)        | **cp-kafka-connect** (Docker) | MongoDB Sink Connector               |
+
+### Start infra
+
+```bash
+make infra-up
+```
+
+This starts Kafka, Kafka Connect, and MinIO via `infra/docker-compose.yml`, waits for them to
+be healthy, creates the MinIO bucket, and registers the MongoDB Sink Connector.
+
+### Sink Connector
+
+The connector config is in `infra/connectors/mongo-sink.json`. It:
+
+- Reads from the `s3-events` Kafka topic.
+- Upserts documents into `temporal.sources` in Atlas using the S3 object key as the ID.
+
+Registration happens automatically on `make infra-up` via `infra/register_connector.py`.
+
+Check connector status:
+
+```bash
+make connector-status    # should show RUNNING
+```
+
+### MinIO (local S3)
+
+- Console: [http://localhost:9001](http://localhost:9001) (user: `minioadmin` / pass: `minioadmin`)
+- API: `http://localhost:9000`
+- Bucket: `temporal-datasources` (auto-created)
+- MinIO emits native S3 events to Kafka when a file is uploaded — no extra code needed.
+
+### Stop / clean
+
+```bash
+make infra-down     # stop containers (keep volumes)
+make infra-clean    # stop + delete volumes (wipes Kafka + MinIO data)
+```
+
+---
+
+## 7. Run the full stack
+
+`make start` starts all services in the background:
+
+```bash
+make start
+```
+
+Starts (in order):
+
+1. Infra (Kafka + Connect + MinIO) via `make infra-up`
+2. Temporal dev server (`:7233`, Web UI `:8233`)
+3. Temporal worker (`pipeline/worker.py`)
+4. Trigger listener (`pipeline/trigger_listener.py`) — local change-stream shim
+5. Agent API (`agent/api.py`, `:8090`)
+6. Agent UI (`agent/ui`, `:5173`)
+
+Logs go to `.local/*.log`. Tail them:
+
+```bash
+make app-logs
+```
+
+### Create the Atlas Vector Search index (one-time)
+
+```bash
+make index
+```
+
+This creates the `temporalai_search_index` vector search index on `temporal.knowledge` in Atlas.
+The workflow also creates it automatically on first ingest, but running `make index` upfront avoids
+a delay on the first document.
+
+Docs: [Atlas Vector Search](https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-overview/)
+
+### Seed a document
+
+```bash
+make seed                                         # uploads seed/awesome-temporal.md
+make seed FILE=./my-doc.pdf KEY=docs/my-doc.pdf   # upload your own file
+```
+
+Supported formats: `.md`, `.pdf`, `.csv`, `.txt`.
+
+Watch the workflow run in the Temporal Web UI at [http://localhost:8233](http://localhost:8233).
+
+### Use the agent UI
+
+Open [http://localhost:5173](http://localhost:5173) and ask questions about the ingested docs.
+
+### Stop everything
+
+```bash
+make stop           # stops app + Temporal + infra
+make stop-app       # stops app processes only (leaves infra + Temporal running)
+make restart-app    # restart app processes after .env changes
+```
+
+---
+
+## 8. Verify ingestion
+
+```bash
+make connector-status                                   # sink should be RUNNING
+make seed FILE=./my-doc.pdf KEY=docs/my-doc.pdf
+# watch Temporal UI: IngestWorkflow → Completed
+make query Q="something in that file"                   # vector search result
+```
+
+In Atlas, confirm:
+
+- `temporal.sources` has a document with the S3 key (written by the sink connector).
+- `temporal.knowledge` has embedded chunk documents.
+
+---
+
+## 9. Backfill + model cutover
+
+Use this when upgrading the embedding model (e.g. `voyage-3.5` → a newer model with different
+dimensions):
+
+```bash
+# Re-embed the active collection into knowledge_v2
+make backfill MODEL=voyage-3-large
+
+# Wait for BackfillWorkflow to complete in the Temporal UI
+# Wait for the knowledge_v2 Atlas Vector Search index to reach READY state
+
+# Flip the active pointer to knowledge_v2
+make cutover TO=knowledge_v2
+
+# Verify queries now hit knowledge_v2
+make query Q="test question"
+```
+
+The agent reads the `temporal_config` collection to know which collection is active. No restart
+needed.
+
+---
+
+## 10. Atlas Stream Processing (production trigger)
+
+In production, `trigger_listener.py` is replaced by **Atlas Stream Processing (ASP)** — a
+MongoDB-managed service that watches change streams and calls an HTTPS endpoint.
+
+> For local dev, `trigger_listener.py` provides identical behaviour without needing an ASP instance.
+
+### One-time ASP setup
+
+**Prerequisites:**
+
+- An Atlas **Stream Processing Instance (SPI)** — [create one](https://www.mongodb.com/docs/atlas/atlas-stream-processing/tutorial/)
+- A connection to your Atlas cluster registered in the SPI's connection registry as `atlasCluster`
+- The trigger service deployed at a public HTTPS URL (e.g. `https://<host>/ingest-trigger`)
+- An HTTPS connection registered in the SPI as `temporalTrigger` pointing to the trigger service
+
+**Connect to the SPI with `mongosh` and create the processor:**
+
+```javascript
+sp.createStreamProcessor("src_to_temporal", [
+  {
+    $source: {
+      connectionName: "atlasCluster",
+      db: "temporal",
+      coll: "sources",
+      config: { fullDocument: "updateLookup" },
+    },
+  },
+  { $match: { operationType: { $in: ["insert", "replace", "update"] } } },
+  {
+    $project: {
+      bucket: { $arrayElemAt: ["$fullDocument.Records.s3.bucket.name", 0] },
+      key: { $arrayElemAt: ["$fullDocument.Records.s3.object.key", 0] },
+    },
+  },
+  {
+    $https: {
+      connectionName: "temporalTrigger",
+      path: "/ingest-trigger",
+      method: "POST",
+      as: "response",
+      payload: [
+        { $replaceRoot: { newRoot: { bucket: "$bucket", key: "$key" } } },
+      ],
+    },
+  },
+]);
+
+sp.src_to_temporal.start();
+sp.src_to_temporal.stats();
+```
+
+See `infra/asp/README.md` for full details and troubleshooting.
+
+Docs: [Atlas Stream Processing](https://www.mongodb.com/docs/atlas/atlas-stream-processing/)
+
+---
+
+## Cloud infra references
+
+When moving from local dev to real cloud infrastructure, use these references:
+
+### MongoDB Atlas
+
+| Topic                   | Documentation                                                                                                                |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Create a cluster        | [mongodb.com/docs/atlas/tutorial/create-new-cluster](https://www.mongodb.com/docs/atlas/tutorial/create-new-cluster/)        |
+| Database users          | [mongodb.com/docs/atlas/security-add-mongodb-users](https://www.mongodb.com/docs/atlas/security-add-mongodb-users/)          |
+| Network access          | [mongodb.com/docs/atlas/security/ip-access-list](https://www.mongodb.com/docs/atlas/security/ip-access-list/)                |
+| Atlas Vector Search     | [mongodb.com/docs/atlas/atlas-vector-search](https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-overview/) |
+| Atlas Stream Processing | [mongodb.com/docs/atlas/atlas-stream-processing](https://www.mongodb.com/docs/atlas/atlas-stream-processing/)                |
+
+### Kafka (production)
+
+| Option                  | Documentation                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| Confluent Cloud         | [docs.confluent.io/cloud](https://docs.confluent.io/cloud/current/overview.html)                  |
+| Amazon MSK              | [docs.aws.amazon.com/msk](https://docs.aws.amazon.com/msk/latest/developerguide/what-is-msk.html) |
+| MongoDB Kafka Connector | [mongodb.com/docs/kafka-connector](https://www.mongodb.com/docs/kafka-connector/current/)         |
+
+Update `KAFKA_BOOTSTRAP` and `KAFKA_CONNECT_URL` in `.env` to point to the managed cluster.
+
+### AWS S3 (production)
+
+Replace MinIO with real S3:
+
+```bash
+# In .env — comment out S3_ENDPOINT_URL, set real values
+S3_BUCKET=your-production-bucket
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=<real-key>
+AWS_SECRET_ACCESS_KEY=<real-secret>
+```
+
+| Topic                                   | Documentation                                                                                                               |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| S3 Getting Started                      | [docs.aws.amazon.com/s3/getting-started](https://docs.aws.amazon.com/AmazonS3/latest/userguide/GetStartedWithS3.html)       |
+| S3 Event Notifications to SQS/SNS/Kafka | [docs.aws.amazon.com/s3/event-notifications](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html) |
+| MSK Connect (Kafka Connect managed)     | [docs.aws.amazon.com/msk/connect](https://docs.aws.amazon.com/msk/latest/developerguide/msk-connect.html)                   |
+
+### Temporal (production)
+
+| Option                | Documentation                                                                    |
+| --------------------- | -------------------------------------------------------------------------------- |
+| Temporal Cloud        | [temporal.io/cloud](https://temporal.io/cloud)                                   |
+| Self-hosted with Helm | [docs.temporal.io/self-hosted-guide](https://docs.temporal.io/self-hosted-guide) |
+
+Update `TEMPORAL_ADDRESS` in `.env` to the Temporal Cloud endpoint. Add mTLS cert paths for
+Temporal Cloud connections.
+
+### Voyage AI (via MongoDB Atlas Models)
+
+| Topic | Documentation |
+| --- | --- |
+| Atlas Models overview | [mongodb.com/docs/atlas/ai-integrations](https://www.mongodb.com/docs/atlas/ai-integrations/) |
+| Voyage AI embeddings on Atlas | [mongodb.com/docs/atlas/atlas-vector-search/ai-integrations/voyage-ai](https://www.mongodb.com/docs/atlas/atlas-vector-search/ai-integrations/voyage-ai/) |
+| Available embedding models | [mongodb.com/docs/atlas/ai-integrations/voyage-ai/models](https://www.mongodb.com/docs/atlas/ai-integrations/) |
+
+### Anthropic
+
+| Topic        | Documentation                                                                                                     |
+| ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| Messages API | [docs.anthropic.com/en/api/messages](https://docs.anthropic.com/en/api/messages)                                  |
+| Models       | [docs.anthropic.com/en/docs/about-claude/models](https://docs.anthropic.com/en/docs/about-claude/models/overview) |
