@@ -77,6 +77,7 @@ This PRA packages the pattern that removes that pain — already in production a
 ## System architecture
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
 
     subgraph SRC["Operational Sources  ·  plug in any Kafka-compatible source"]
@@ -232,4 +233,7 @@ mongodb-temporal-sa-pra/
 
 ## Developer guide
 
-Follow **[docs/RUNBOOK.md](docs/RUNBOOK.md)** for setup instructions
+| Document                               | Description                                                                                       |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **[docs/RUNBOOK.md](docs/RUNBOOK.md)** | Prerequisites, API key setup, local spin-up, cloud infra references                               |
+| **[docs/LLD.md](docs/LLD.md)**         | Low-level design — data contracts, workflow internals, scaling to multiple sources and data types |
