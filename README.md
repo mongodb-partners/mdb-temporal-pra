@@ -76,68 +76,7 @@ This PRA packages the pattern that removes that pain — already in production a
 
 ## System architecture
 
-```mermaid
-%%{init: {'theme': 'neutral'}}%%
-flowchart LR
-
-    subgraph SRC["Operational Sources  ·  plug in any Kafka-compatible source"]
-        MINIO["MinIO / S3\n(demo — temporal-datasources)"]
-        OTHERS["RDBMS · IoT · MongoDB\nKafka topic · ..."]
-    end
-
-    subgraph KAFKA_LAYER["Kafka streaming layer"]
-        KAFKA[["Kafka\ns3-events topic"]]
-        SINK["MongoDB Sink Connector\n(Kafka Connect)"]
-        KAFKA --> SINK
-    end
-
-    subgraph ATLAS["MongoDB Atlas — single source of truth"]
-        SRC_C[("sources")]
-        STG[("chunks_staging")]
-        KB[("knowledge\n+ vector_index")]
-        KB2[("knowledge_v2\n+ vector_index")]
-        CFG[("temporal_config\nactive pointer")]
-        MEM[("agent_memory")]
-    end
-
-    subgraph TRIG["Trigger"]
-        ASP["Atlas Stream Processing\n($https)  ·or·  trigger_listener (dev)"]
-    end
-
-    subgraph TW["Temporal — IngestWorkflow"]
-        S1["1  fetch S3 + factory chunk\n(md / pdf / csv)"]
-        S2["2  embed each chunk\n(Voyage AI)"]
-        S3["3  create / UPDATE index"]
-        S1 --> S2 --> S3
-    end
-
-    subgraph BF["Backfill — model upgrade"]
-        BFW["BackfillWorkflow\nre-embed → knowledge_v2"]
-        CUT["cutover\nflip active pointer"]
-    end
-
-    subgraph AGENT["Deep Agent"]
-        API["FastAPI /query"]
-        UI["React UI\n:5173"]
-    end
-
-    MINIO -->|S3 event| KAFKA
-    OTHERS -.->|stream events| KAFKA
-    SINK -->|upsert by key| SRC_C
-    SRC_C -->|change stream| ASP
-    ASP -->|start IngestWorkflow| S1
-    S1 -->|persist chunks| STG
-    STG --> S2
-    S3 -->|upsert · prune stale| KB
-    KB -.->|read| BFW
-    BFW -.->|write| KB2
-    KB2 -.-> CUT
-    CUT -.-> CFG
-    UI --> API
-    API -->|read active| CFG
-    API -->|vector search + rerank| KB
-    API -->|answer + memory| MEM
-```
+![alt text](docs/images/mongodb-temporal-architecture.png)
 
 ### Atlas data model
 
