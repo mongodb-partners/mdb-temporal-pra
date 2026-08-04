@@ -1,0 +1,730 @@
+{"0": {
+    "doc": "Architecture",
+    "title": "Architecture",
+    "content": "How the pieces fit together — from a file landing in object storage to a grounded answer streaming back to the user. | High-level design | Division of responsibility | System architecture | Atlas data model | Repository layout | Where to go next | . ",
+    "url": "/mdb-temporal-pra/architecture/",
+    
+    "relUrl": "/architecture/"
+  },"1": {
+    "doc": "Architecture",
+    "title": "High-level design",
+    "content": ". How to read it: . | Data sources (IoT, S3, RDBMS) feed into Kafka via native connectors. | A Kafka Sink Connector lands raw records into MongoDB Atlas (sources collection). | Atlas Stream Processing watches the change stream on sources and triggers the Temporal ingest workflow. | Temporal chunks the content, calls Voyage AI for embeddings, and upserts into Atlas Search. | A Deep Agent (FastAPI + React) runs vector search over the fresh knowledge and streams answers to the user. | . Serverless option: Atlas Stream Processing’s $https invocation pairs naturally with Temporal Serverless Workers on AWS Lambda. ASP fires the $https trigger, Lambda spins up a Temporal worker on demand, and the IngestWorkflow runs to completion with full durability. No always-on worker process required. ",
+    "url": "/mdb-temporal-pra/architecture/#high-level-design",
+    
+    "relUrl": "/architecture/#high-level-design"
+  },"2": {
+    "doc": "Architecture",
+    "title": "Division of responsibility",
+    "content": "| Concern | Owner | . | Orchestration, retries, checkpointing, backfill, resumability | Temporal | . | Operational data, vector index, agent memory &amp; state | MongoDB Atlas | . | Embeddings &amp; reranking | MongoDB Voyage AI | . | Answer synthesis | Anthropic Claude | . Each layer owns exactly what it is best at: Temporal owns when and whether work runs, Atlas owns where data lives and how it’s retrieved, and the model providers own the embeddings and language — no overlap, no glue code duplicating those guarantees. ",
+    "url": "/mdb-temporal-pra/architecture/#division-of-responsibility",
+    
+    "relUrl": "/architecture/#division-of-responsibility"
+  },"3": {
+    "doc": "Architecture",
+    "title": "System architecture",
+    "content": ". ",
+    "url": "/mdb-temporal-pra/architecture/#system-architecture",
+    
+    "relUrl": "/architecture/#system-architecture"
+  },"4": {
+    "doc": "Architecture",
+    "title": "Atlas data model",
+    "content": "Database: temporal ├── sources ← raw S3 event records (written by Kafka Sink Connector) ├── chunks_staging ← intermediate chunks during IngestWorkflow ├── knowledge ← embedded docs + Atlas Vector Search index (active) ├── knowledge_v2 ← BackfillWorkflow writes here on model upgrade (blue/green) ├── temporal_config ← active collection/index pointer (flipped by cutover) └── agent_memory ← agent state, memory, citations (written by Deep Agent) . The agent writes memory back into the same database the retrieval reads from — no copy, no lag. For the full schema of each collection — field-by-field documents, indexes, and the blue/green cutover mechanics — see the Low-Level Design → MongoDB data model. ",
+    "url": "/mdb-temporal-pra/architecture/#atlas-data-model",
+    
+    "relUrl": "/architecture/#atlas-data-model"
+  },"5": {
+    "doc": "Architecture",
+    "title": "Repository layout",
+    "content": "mdb-temporal-pra/ ├── README.md ├── Makefile ← all dev commands (make help) ├── pyproject.toml ← Python deps managed by uv ├── .env.example ← copy → .env, fill credentials ├── agent/ │ ├── api.py ← FastAPI deep-agent backend (:8090) │ ├── retrieval.py ← vector search + rerank + Claude answer │ └── ui/ ← React/Vite chat UI (:5173) ├── pipeline/ │ ├── worker.py ← Temporal worker process │ ├── trigger_listener.py ← local change-stream trigger shim (dev) │ ├── trigger_api.py ← ASP $https trigger endpoint (production) │ ├── workflows/ │ │ ├── ingest_workflow.py ← IngestWorkflow: fetch → chunk → embed → index │ │ └── backfill_workflow.py ← BackfillWorkflow: re-embed → knowledge_v2 │ ├── activities/ │ │ ├── ingest.py ← fetch + stage + embed + index activities │ │ └── backfill.py ← re-embed activity │ ├── extractors/ ← md / pdf / csv / text extractors │ ├── config_store.py ← active collection/index pointer │ └── search_index.py ← idempotent Atlas Vector Search management └── infra/ ├── docker-compose.yml ← Kafka + Connect + MinIO (local dev) ├── connectors/mongo-sink.json ← Kafka Connect → temporal.sources ├── atlas_indexes.json ← Vector Search index definitions └── asp/README.md ← Atlas Stream Processing setup (production) . ",
+    "url": "/mdb-temporal-pra/architecture/#repository-layout",
+    
+    "relUrl": "/architecture/#repository-layout"
+  },"6": {
+    "doc": "Architecture",
+    "title": "Where to go next",
+    "content": ". | Getting Started — spin the whole stack up locally. | Low-Level Design — data contracts, workflow internals, and extension patterns for new sources and data types. | . ",
+    "url": "/mdb-temporal-pra/architecture/#where-to-go-next",
+    
+    "relUrl": "/architecture/#where-to-go-next"
+  },"7": {
+    "doc": "Getting Started",
+    "title": "Getting Started — Developer Setup Guide",
+    "content": "Everything a new developer needs to spin up this repo locally and understand the production cloud setup. ",
+    "url": "/mdb-temporal-pra/getting-started/#getting-started--developer-setup-guide",
+    
+    "relUrl": "/getting-started/#getting-started--developer-setup-guide"
+  },"8": {
+    "doc": "Getting Started",
+    "title": "Table of contents",
+    "content": ". | Prerequisites | 1. MongoDB Atlas setup | 2. Voyage AI API key | 3. Anthropic API key | 4. Environment configuration | 5. Local setup (make setup) | 6. Local Docker infra — Kafka + MinIO | 7. Run the full stack | 8. Verify ingestion | 9. Backfill + model cutover | 10. Atlas Stream Processing (production trigger) | Cloud infra references | Maintaining this documentation site | . ",
+    "url": "/mdb-temporal-pra/getting-started/#table-of-contents",
+    
+    "relUrl": "/getting-started/#table-of-contents"
+  },"9": {
+    "doc": "Getting Started",
+    "title": "Prerequisites",
+    "content": "Install these tools before running anything: . | Tool | Version | Install | . | uv | latest | curl -LsSf https://astral.sh/uv/install.sh \\| sh — docs | . | Docker Desktop | ≥ 4.x | docker.com/products/docker-desktop | . | Temporal CLI | latest | brew install temporal or docs.temporal.io/cli | . | Node.js | ≥ 20 | brew install node or nodejs.org | . | mongosh | latest | brew install mongosh — needed for Atlas Stream Processing setup | . Verify: . uv --version docker --version temporal --version node --version . ",
+    "url": "/mdb-temporal-pra/getting-started/#prerequisites",
+    
+    "relUrl": "/getting-started/#prerequisites"
+  },"10": {
+    "doc": "Getting Started",
+    "title": "1. MongoDB Atlas setup",
+    "content": " ",
+    "url": "/mdb-temporal-pra/getting-started/#1-mongodb-atlas-setup",
+    
+    "relUrl": "/getting-started/#1-mongodb-atlas-setup"
+  },"11": {
+    "doc": "Getting Started",
+    "title": "Create a free cluster",
+    "content": ". | Sign up or log in at cloud.mongodb.com. | Create a new M0 free cluster (or any tier) in a region close to you. | Docs: Create a Cluster | . ",
+    "url": "/mdb-temporal-pra/getting-started/#create-a-free-cluster",
+    
+    "relUrl": "/getting-started/#create-a-free-cluster"
+  },"12": {
+    "doc": "Getting Started",
+    "title": "Create a database user",
+    "content": ". | In the Atlas UI: Security → Database Access → Add New Database User. | Choose Password auth. Note the username and password. | Grant Atlas Admin role (or at minimum readWriteAnyDatabase). | Docs: Configure Database Users | . ",
+    "url": "/mdb-temporal-pra/getting-started/#create-a-database-user",
+    
+    "relUrl": "/getting-started/#create-a-database-user"
+  },"13": {
+    "doc": "Getting Started",
+    "title": "Allow network access",
+    "content": "The Kafka Connect container uses your machine’s public IP to reach Atlas. You need to allow: . | Your local machine IP (for Python scripts). | 0.0.0.0/0 temporarily while testing, or your NAT public IP for the Docker network. | . Steps: Security → Network Access → Add IP Address. Docs: Configure IP Access List . ",
+    "url": "/mdb-temporal-pra/getting-started/#allow-network-access",
+    
+    "relUrl": "/getting-started/#allow-network-access"
+  },"14": {
+    "doc": "Getting Started",
+    "title": "Get the connection string",
+    "content": ". | Database → Connect → Drivers → copy the mongodb+srv:// URI. | Replace &lt;username&gt; and &lt;password&gt; with the credentials you created above. | . The URI will look like: . mongodb+srv://myuser:mypass@mycluster.abc12.mongodb.net/?retryWrites=true&amp;w=majority . ",
+    "url": "/mdb-temporal-pra/getting-started/#get-the-connection-string",
+    
+    "relUrl": "/getting-started/#get-the-connection-string"
+  },"15": {
+    "doc": "Getting Started",
+    "title": "2. Voyage AI API key",
+    "content": "Voyage AI is available directly through MongoDB Atlas Models — no separate Voyage AI account required. | In the Atlas UI go to Services → Atlas Models (or search “Models” in the left nav). | Select Voyage AI from the provider list and click Generate API Key. | Copy the key — it will only be shown once. | The default model used is voyage-3.5 (1024 dimensions). | Docs: Atlas Models — Voyage AI | . ",
+    "url": "/mdb-temporal-pra/getting-started/#2-voyage-ai-api-key",
+    
+    "relUrl": "/getting-started/#2-voyage-ai-api-key"
+  },"16": {
+    "doc": "Getting Started",
+    "title": "3. Anthropic API key",
+    "content": "Anthropic Claude is used by the deep agent to synthesize answers from retrieved chunks. | Sign up at console.anthropic.com. | Go to API Keys and create a new key. | The default model is claude-sonnet-4-5. Retrieval still works without this key; only answer synthesis requires it. | Docs: Anthropic API docs | . ",
+    "url": "/mdb-temporal-pra/getting-started/#3-anthropic-api-key",
+    
+    "relUrl": "/getting-started/#3-anthropic-api-key"
+  },"17": {
+    "doc": "Getting Started",
+    "title": "4. Environment configuration",
+    "content": "cp .env.example .env . Open .env and fill in the required values: . # REQUIRED — fill these in MONGODB_URI=mongodb+srv://&lt;user&gt;:&lt;pass&gt;@&lt;cluster&gt;.mongodb.net/?retryWrites=true&amp;w=majority VOYAGE_API_KEY=&lt;your-voyage-api-key&gt; ANTHROPIC_API_KEY=&lt;your-anthropic-api-key&gt; . The remaining defaults work as-is for local development (Kafka on localhost:29092, MinIO on localhost:9000, Temporal on localhost:7233). For real AWS S3 instead of local MinIO: . # Comment out S3_ENDPOINT_URL and set real values: # S3_ENDPOINT_URL=http://localhost:9000 ← remove this line S3_BUCKET=your-real-s3-bucket AWS_ACCESS_KEY_ID=&lt;real-key&gt; AWS_SECRET_ACCESS_KEY=&lt;real-secret&gt; AWS_REGION=us-east-1 . ",
+    "url": "/mdb-temporal-pra/getting-started/#4-environment-configuration",
+    
+    "relUrl": "/getting-started/#4-environment-configuration"
+  },"18": {
+    "doc": "Getting Started",
+    "title": "5. Local setup (make setup)",
+    "content": "Install Python and UI dependencies in one command: . make setup . This runs: . | uv sync — installs Python 3.12 + all dependencies from pyproject.toml | npm install in agent/ui/ — installs the React/Vite frontend | . To install separately: . make install # Python only cd agent/ui &amp;&amp; npm install # UI only . ",
+    "url": "/mdb-temporal-pra/getting-started/#5-local-setup-make-setup",
+    
+    "relUrl": "/getting-started/#5-local-setup-make-setup"
+  },"19": {
+    "doc": "Getting Started",
+    "title": "6. Local Docker infra — Kafka + MinIO",
+    "content": "The local demo replaces production Kafka (Confluent Cloud / MSK) and S3 with: . | Production | Local substitute | Purpose | . | Confluent Cloud / Apache Kafka | cp-kafka (Docker) | Streaming ingestion + Sink Connector | . | AWS S3 | MinIO (Docker) | Object storage for files | . | Kafka Connect (managed) | cp-kafka-connect (Docker) | MongoDB Sink Connector | . ",
+    "url": "/mdb-temporal-pra/getting-started/#6-local-docker-infra--kafka--minio",
+    
+    "relUrl": "/getting-started/#6-local-docker-infra--kafka--minio"
+  },"20": {
+    "doc": "Getting Started",
+    "title": "Start infra",
+    "content": "make infra-up . This starts Kafka, Kafka Connect, and MinIO via infra/docker-compose.yml, waits for them to be healthy, creates the MinIO bucket, and registers the MongoDB Sink Connector. ",
+    "url": "/mdb-temporal-pra/getting-started/#start-infra",
+    
+    "relUrl": "/getting-started/#start-infra"
+  },"21": {
+    "doc": "Getting Started",
+    "title": "Sink Connector",
+    "content": "The connector config is in infra/connectors/mongo-sink.json. It: . | Reads from the s3-events Kafka topic. | Upserts documents into temporal.sources in Atlas using the S3 object key as the ID. | . Registration happens automatically on make infra-up via infra/register_connector.py. Check connector status: . make connector-status # should show RUNNING . ",
+    "url": "/mdb-temporal-pra/getting-started/#sink-connector",
+    
+    "relUrl": "/getting-started/#sink-connector"
+  },"22": {
+    "doc": "Getting Started",
+    "title": "MinIO (local S3)",
+    "content": ". | Console: http://localhost:9001 (user: minioadmin / pass: minioadmin) | API: http://localhost:9000 | Bucket: temporal-datasources (auto-created) | MinIO emits native S3 events to Kafka when a file is uploaded — no extra code needed. | . ",
+    "url": "/mdb-temporal-pra/getting-started/#minio-local-s3",
+    
+    "relUrl": "/getting-started/#minio-local-s3"
+  },"23": {
+    "doc": "Getting Started",
+    "title": "Stop / clean",
+    "content": "make infra-down # stop containers (keep volumes) make infra-clean # stop + delete volumes (wipes Kafka + MinIO data) . ",
+    "url": "/mdb-temporal-pra/getting-started/#stop--clean",
+    
+    "relUrl": "/getting-started/#stop--clean"
+  },"24": {
+    "doc": "Getting Started",
+    "title": "7. Run the full stack",
+    "content": "make start starts all services in the background: . make start . Starts (in order): . | Infra (Kafka + Connect + MinIO) via make infra-up | Temporal dev server (:7233, Web UI :8233) | Temporal worker (pipeline/worker.py) | Trigger listener (pipeline/trigger_listener.py) — local change-stream shim | Agent API (agent/api.py, :8090) | Agent UI (agent/ui, :5173) | . Logs go to .local/*.log. Tail them: . make app-logs . ",
+    "url": "/mdb-temporal-pra/getting-started/#7-run-the-full-stack",
+    
+    "relUrl": "/getting-started/#7-run-the-full-stack"
+  },"25": {
+    "doc": "Getting Started",
+    "title": "Create the Atlas Vector Search index (one-time)",
+    "content": "make index . This creates the temporalai_search_index vector search index on temporal.knowledge in Atlas. The workflow also creates it automatically on first ingest, but running make index upfront avoids a delay on the first document. Docs: Atlas Vector Search . ",
+    "url": "/mdb-temporal-pra/getting-started/#create-the-atlas-vector-search-index-one-time",
+    
+    "relUrl": "/getting-started/#create-the-atlas-vector-search-index-one-time"
+  },"26": {
+    "doc": "Getting Started",
+    "title": "Seed a document",
+    "content": "make seed # uploads seed/awesome-temporal.md make seed FILE=./my-doc.pdf KEY=docs/my-doc.pdf # upload your own file . Supported formats: .md, .pdf, .csv, .txt. Watch the workflow run in the Temporal Web UI at http://localhost:8233. ",
+    "url": "/mdb-temporal-pra/getting-started/#seed-a-document",
+    
+    "relUrl": "/getting-started/#seed-a-document"
+  },"27": {
+    "doc": "Getting Started",
+    "title": "Use the agent UI",
+    "content": "Open http://localhost:5173 and ask questions about the ingested docs. ",
+    "url": "/mdb-temporal-pra/getting-started/#use-the-agent-ui",
+    
+    "relUrl": "/getting-started/#use-the-agent-ui"
+  },"28": {
+    "doc": "Getting Started",
+    "title": "Stop everything",
+    "content": "make stop # stops app + Temporal + infra make stop-app # stops app processes only (leaves infra + Temporal running) make restart-app # restart app processes after .env changes . ",
+    "url": "/mdb-temporal-pra/getting-started/#stop-everything",
+    
+    "relUrl": "/getting-started/#stop-everything"
+  },"29": {
+    "doc": "Getting Started",
+    "title": "8. Verify ingestion",
+    "content": "make connector-status # sink should be RUNNING make seed FILE=./my-doc.pdf KEY=docs/my-doc.pdf # watch Temporal UI: IngestWorkflow → Completed make query Q=\"something in that file\" # vector search result . In Atlas, confirm: . | temporal.sources has a document with the S3 key (written by the sink connector). | temporal.knowledge has embedded chunk documents. | . ",
+    "url": "/mdb-temporal-pra/getting-started/#8-verify-ingestion",
+    
+    "relUrl": "/getting-started/#8-verify-ingestion"
+  },"30": {
+    "doc": "Getting Started",
+    "title": "9. Backfill + model cutover",
+    "content": "Use this when upgrading the embedding model (e.g. voyage-3.5 → a newer model with different dimensions): . # Re-embed the active collection into knowledge_v2 make backfill MODEL=voyage-3-large # Wait for BackfillWorkflow to complete in the Temporal UI # Wait for the knowledge_v2 Atlas Vector Search index to reach READY state # Flip the active pointer to knowledge_v2 make cutover TO=knowledge_v2 # Verify queries now hit knowledge_v2 make query Q=\"test question\" . The agent reads the temporal_config collection to know which collection is active. No restart needed. ",
+    "url": "/mdb-temporal-pra/getting-started/#9-backfill--model-cutover",
+    
+    "relUrl": "/getting-started/#9-backfill--model-cutover"
+  },"31": {
+    "doc": "Getting Started",
+    "title": "10. Atlas Stream Processing (production trigger)",
+    "content": "In production, trigger_listener.py is replaced by Atlas Stream Processing (ASP) — a MongoDB-managed service that watches change streams and calls an HTTPS endpoint. For local dev, trigger_listener.py provides identical behaviour without needing an ASP instance. ",
+    "url": "/mdb-temporal-pra/getting-started/#10-atlas-stream-processing-production-trigger",
+    
+    "relUrl": "/getting-started/#10-atlas-stream-processing-production-trigger"
+  },"32": {
+    "doc": "Getting Started",
+    "title": "One-time ASP setup",
+    "content": "Prerequisites: . | An Atlas Stream Processing Instance (SPI) — create one | A connection to your Atlas cluster registered in the SPI’s connection registry as atlasCluster | The trigger service deployed at a public HTTPS URL (e.g. https://&lt;host&gt;/ingest-trigger) | An HTTPS connection registered in the SPI as temporalTrigger pointing to the trigger service | . Connect to the SPI with mongosh and create the processor: . sp.createStreamProcessor(\"src_to_temporal\", [ { $source: { connectionName: \"atlasCluster\", db: \"temporal\", coll: \"sources\", config: { fullDocument: \"updateLookup\" }, }, }, { $match: { operationType: { $in: [\"insert\", \"replace\", \"update\"] } } }, { $project: { bucket: { $arrayElemAt: [\"$fullDocument.Records.s3.bucket.name\", 0] }, key: { $arrayElemAt: [\"$fullDocument.Records.s3.object.key\", 0] }, }, }, { $https: { connectionName: \"temporalTrigger\", path: \"/ingest-trigger\", method: \"POST\", as: \"response\", payload: [ { $replaceRoot: { newRoot: { bucket: \"$bucket\", key: \"$key\" } } }, ], }, }, ]); sp.src_to_temporal.start(); sp.src_to_temporal.stats(); . See infra/asp/README.md for full details and troubleshooting. Docs: Atlas Stream Processing . ",
+    "url": "/mdb-temporal-pra/getting-started/#one-time-asp-setup",
+    
+    "relUrl": "/getting-started/#one-time-asp-setup"
+  },"33": {
+    "doc": "Getting Started",
+    "title": "Cloud infra references",
+    "content": "When moving from local dev to real cloud infrastructure, use these references: . ",
+    "url": "/mdb-temporal-pra/getting-started/#cloud-infra-references",
+    
+    "relUrl": "/getting-started/#cloud-infra-references"
+  },"34": {
+    "doc": "Getting Started",
+    "title": "MongoDB Atlas",
+    "content": "| Topic | Documentation | . | Create a cluster | mongodb.com/docs/atlas/tutorial/create-new-cluster | . | Database users | mongodb.com/docs/atlas/security-add-mongodb-users | . | Network access | mongodb.com/docs/atlas/security/ip-access-list | . | Atlas Vector Search | mongodb.com/docs/atlas/atlas-vector-search | . | Atlas Stream Processing | mongodb.com/docs/atlas/atlas-stream-processing | . ",
+    "url": "/mdb-temporal-pra/getting-started/#mongodb-atlas",
+    
+    "relUrl": "/getting-started/#mongodb-atlas"
+  },"35": {
+    "doc": "Getting Started",
+    "title": "Kafka (production)",
+    "content": "| Option | Documentation | . | Confluent Cloud | docs.confluent.io/cloud | . | Amazon MSK | docs.aws.amazon.com/msk | . | MongoDB Kafka Connector | mongodb.com/docs/kafka-connector | . Update KAFKA_BOOTSTRAP and KAFKA_CONNECT_URL in .env to point to the managed cluster. ",
+    "url": "/mdb-temporal-pra/getting-started/#kafka-production",
+    
+    "relUrl": "/getting-started/#kafka-production"
+  },"36": {
+    "doc": "Getting Started",
+    "title": "AWS S3 (production)",
+    "content": "Replace MinIO with real S3: . # In .env — comment out S3_ENDPOINT_URL, set real values S3_BUCKET=your-production-bucket AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=&lt;real-key&gt; AWS_SECRET_ACCESS_KEY=&lt;real-secret&gt; . | Topic | Documentation | . | S3 Getting Started | docs.aws.amazon.com/s3/getting-started | . | S3 Event Notifications to SQS/SNS/Kafka | docs.aws.amazon.com/s3/event-notifications | . | MSK Connect (Kafka Connect managed) | docs.aws.amazon.com/msk/connect | . ",
+    "url": "/mdb-temporal-pra/getting-started/#aws-s3-production",
+    
+    "relUrl": "/getting-started/#aws-s3-production"
+  },"37": {
+    "doc": "Getting Started",
+    "title": "Temporal (production)",
+    "content": "| Option | Documentation | . | Temporal Cloud | temporal.io/cloud | . | Self-hosted with Helm | docs.temporal.io/self-hosted-guide | . Update TEMPORAL_ADDRESS in .env to the Temporal Cloud endpoint. Add mTLS cert paths for Temporal Cloud connections. ",
+    "url": "/mdb-temporal-pra/getting-started/#temporal-production",
+    
+    "relUrl": "/getting-started/#temporal-production"
+  },"38": {
+    "doc": "Getting Started",
+    "title": "Voyage AI (via MongoDB Atlas Models)",
+    "content": "| Topic | Documentation | . | Atlas Models overview | mongodb.com/docs/atlas/ai-integrations | . | Voyage AI embeddings on Atlas | mongodb.com/docs/atlas/atlas-vector-search/ai-integrations/voyage-ai | . | Available embedding models | mongodb.com/docs/atlas/ai-integrations/voyage-ai/models | . ",
+    "url": "/mdb-temporal-pra/getting-started/#voyage-ai-via-mongodb-atlas-models",
+    
+    "relUrl": "/getting-started/#voyage-ai-via-mongodb-atlas-models"
+  },"39": {
+    "doc": "Getting Started",
+    "title": "Anthropic",
+    "content": "| Topic | Documentation | . | Messages API | docs.anthropic.com/en/api/messages | . | Models | docs.anthropic.com/en/docs/about-claude/models | . ",
+    "url": "/mdb-temporal-pra/getting-started/#anthropic",
+    
+    "relUrl": "/getting-started/#anthropic"
+  },"40": {
+    "doc": "Getting Started",
+    "title": "Maintaining this documentation site",
+    "content": "This site (everything under docs/) is a Jekyll site using the Just the Docs theme. The docs/ folder is the editable source; the rendered site is published from the gh-pages branch. Why a prebuilt branch? This organization disables GitHub Actions, and GitHub Pages runs its Jekyll build as an Action. So GitHub cannot build the site — instead we render it to static HTML locally and commit that output to gh-pages (which carries a .nojekyll marker so GitHub serves the files as-is, with no build step). ",
+    "url": "/mdb-temporal-pra/getting-started/#maintaining-this-documentation-site",
+    
+    "relUrl": "/getting-started/#maintaining-this-documentation-site"
+  },"41": {
+    "doc": "Getting Started",
+    "title": "Edit → publish",
+    "content": ". | Edit or add Markdown pages under docs/ (each page needs title and nav_order front matter to appear in the sidebar). | Rebuild and publish — no local Ruby needed, the build runs in Docker: . scripts/build-docs.sh --publish . This renders the site, commits it to gh-pages, and pushes. To preview locally without publishing, run scripts/build-docs.sh (output lands in docs/_site/, git-ignored). | GitHub Pages serves the update at mongodb-partners.github.io/mdb-temporal-pra within a minute. | . ",
+    "url": "/mdb-temporal-pra/getting-started/#edit--publish",
+    
+    "relUrl": "/getting-started/#edit--publish"
+  },"42": {
+    "doc": "Getting Started",
+    "title": "One-time GitHub Pages setup",
+    "content": "Settings → Pages → Source: “Deploy from a branch” → Branch gh-pages / (root) → Save. If GitHub Actions is ever enabled for this repo, the site can build natively from the docs/ folder instead — the _config.yml already declares the remote_theme for that path, and the gh-pages branch can be retired. ",
+    "url": "/mdb-temporal-pra/getting-started/#one-time-github-pages-setup",
+    
+    "relUrl": "/getting-started/#one-time-github-pages-setup"
+  },"43": {
+    "doc": "Getting Started",
+    "title": "Getting Started",
+    "content": " ",
+    "url": "/mdb-temporal-pra/getting-started/",
+    
+    "relUrl": "/getting-started/"
+  },"44": {
+    "doc": "Home",
+    "title": "MongoDB × Temporal",
+    "content": "A production-grade Partner Reference Architecture showing how Temporal and MongoDB Atlas work together to build a durable, change-driven RAG pipeline with a deep-agent chat interface. Get started View architecture Source on GitHub . ",
+    "url": "/mdb-temporal-pra/#mongodb--temporal",
+    
+    "relUrl": "/#mongodb--temporal"
+  },"45": {
+    "doc": "Home",
+    "title": "What is Temporal?",
+    "content": "Temporal is a durable execution platform. It orchestrates long-running workflows as code — with automatic retries, checkpointing, and resume-on-failure built in. You write plain Python functions; Temporal ensures they run to completion even across crashes, deploys, or network partitions. In this architecture Temporal owns two critical concerns: . | Concern | What Temporal guarantees | . | Ingestion pipeline | A crash mid-embedding resumes from the last completed chunk — never re-embeds what is already done (durable execution) | . | Agent workflows | Multi-step agent plans are durable; a failure mid-conversation resumes without losing tool results or memory writes (workflows as code) | . ",
+    "url": "/mdb-temporal-pra/#what-is-temporal",
+    
+    "relUrl": "/#what-is-temporal"
+  },"46": {
+    "doc": "Home",
+    "title": "The problem this solves",
+    "content": "Customers hand-roll resilient ingestion/embedding pipelines and it hurts: . | Customer | Pain hand-rolled without Temporal | . | Regilient AI | MD5 change-tracking in production to decide what to re-embed | . | Glassdoor | A homegrown “lambda clock” cron to generate embeddings | . | Carrier | A FastAPI pipeline, hand-tuning sequential vs. parallel | . | Emerald X | A 5-hour import that fails on the last step reruns the entire import | . This PRA packages the pattern that removes that pain — already in production at DEA Technology, 100ms, Chess.com, and C.R. England. ",
+    "url": "/mdb-temporal-pra/#the-problem-this-solves",
+    
+    "relUrl": "/#the-problem-this-solves"
+  },"47": {
+    "doc": "Home",
+    "title": "Division of responsibility",
+    "content": "| Concern | Owner | . | Orchestration, retries, checkpointing, backfill, resumability | Temporal | . | Operational data, vector index, agent memory &amp; state | MongoDB Atlas | . | Embeddings &amp; reranking | MongoDB Voyage AI | . | Answer synthesis | Anthropic Claude | . ",
+    "url": "/mdb-temporal-pra/#division-of-responsibility",
+    
+    "relUrl": "/#division-of-responsibility"
+  },"48": {
+    "doc": "Home",
+    "title": "Documentation map",
+    "content": ". | Getting Started — prerequisites, API key setup, local spin-up, and cloud infra references. | Architecture — high-level design, the flow from source to answer, division of responsibility, and the Atlas data model. | Low-Level Design — data contracts, workflow internals, the extractor system, and how to scale to more sources and data types. | . ",
+    "url": "/mdb-temporal-pra/#documentation-map",
+    
+    "relUrl": "/#documentation-map"
+  },"49": {
+    "doc": "Home",
+    "title": "Quickstart",
+    "content": "# 1. Clone and enter the repo git clone https://github.com/mongodb-partners/mdb-temporal-pra.git cd mdb-temporal-pra # 2. Copy and fill in credentials cp .env.example .env # Edit .env: set MONGODB_URI, VOYAGE_API_KEY, ANTHROPIC_API_KEY # 3. Install all dependencies (Python + UI) make setup # 4. Start everything (Kafka, Connect, MinIO, Temporal, worker, agent API + UI) make start # 5. Create the Atlas Vector Search index (one-time) make index # 6. Seed a sample document to trigger the full pipeline make seed # 7. Open the agent UI open http://localhost:5173 # 8. Tear everything down make stop . make help lists all available targets. See Getting Started for the full walkthrough. | Service | URL | Login | . | Agent chat UI | http://localhost:5173 |   | . | Temporal Web UI | http://localhost:8233 |   | . | Agent API | http://localhost:8090 |   | . | MinIO console | http://localhost:9001 | username: minioadmin, password: minioadmin | . | Kafka Connect API | http://localhost:8083 |   | . ",
+    "url": "/mdb-temporal-pra/#quickstart",
+    
+    "relUrl": "/#quickstart"
+  },"50": {
+    "doc": "Home",
+    "title": "Home",
+    "content": " ",
+    "url": "/mdb-temporal-pra/",
+    
+    "relUrl": "/"
+  },"51": {
+    "doc": "Low-Level Design",
+    "title": "Low-Level Design",
+    "content": "MongoDB × Temporal Partner Reference Architecture Version: 1.0 · Branch: pipeline-impl · Date: 2026-07-29 . ",
+    "url": "/mdb-temporal-pra/low-level-design/",
+    
+    "relUrl": "/low-level-design/"
+  },"52": {
+    "doc": "Low-Level Design",
+    "title": "Table of contents",
+    "content": ". | 1. Overview | 2. Component inventory | 3. Data contracts | 4. End-to-end data flow | 5. Workflow design . | 5.1 IngestWorkflow | 5.2 BackfillWorkflow | . | 6. Activity design | 7. Extractor system | 8. MongoDB data model | 9. Atlas Vector Search index | 10. Trigger layer | 11. Deep agent | 12. Configuration reference | 13. Scaling to multiple data sources | 14. Scaling to multiple data types | 15. Extension patterns and future sources | . ",
+    "url": "/mdb-temporal-pra/low-level-design/#table-of-contents",
+    
+    "relUrl": "/low-level-design/#table-of-contents"
+  },"53": {
+    "doc": "Low-Level Design",
+    "title": "1. Overview",
+    "content": "This implementation is a durable, change-driven RAG ingestion pipeline built on three services: . | Layer | Service | Role | . | Streaming ingestion | Kafka + MongoDB Sink Connector | Decouple sources from processing; land raw events into Atlas | . | Orchestration | Temporal | Chunk → embed → index, with per-step resumability and automatic retry | . | Storage + retrieval | MongoDB Atlas | Single store for raw records, staged chunks, embedded knowledge, agent memory | . The implementation is intentionally source-agnostic. The S3Ref / RawRecord data contracts and the extractor factory are the only points that need extension when adding a new source or file type — the workflow, activities, and Atlas storage layer are unchanged. ",
+    "url": "/mdb-temporal-pra/low-level-design/#1-overview",
+    
+    "relUrl": "/low-level-design/#1-overview"
+  },"54": {
+    "doc": "Low-Level Design",
+    "title": "2. Component inventory",
+    "content": "pipeline/ ├── worker.py ← Temporal worker (hosts all workflows + activities) ├── config.py ← Pydantic settings (env-driven, lru_cache singleton) ├── models.py ← Data contracts: S3Ref, RawRecord, Chunk, EmbeddedChunk ├── clients.py ← Lazy singletons: Temporal, MongoDB, Voyage, S3 ├── trigger_listener.py ← Local dev: Atlas change-stream → start IngestWorkflow ├── trigger_api.py ← Production: ASP $https POST → start IngestWorkflow ├── trigger.py ← Shared trigger logic (client connect + workflow start) ├── search_index.py ← Idempotent Atlas Vector Search index management ├── config_store.py ← Active collection/index pointer (cutover) ├── s3util.py ← Parse MinIO/S3 event → S3Ref list ├── seed.py ← Dev utility: upload a local file to MinIO ├── seed_repo.py ← Dev utility: bulk-upload a markdown docs repo ├── cutover.py ← Flip active collection pointer in temporal_config ├── retrieval.py ← Shared Atlas vector search (used by agent) ├── workflows/ │ ├── ingest_workflow.py ← IngestWorkflow: 3-stage, per-chunk checkpointing │ └── backfill_workflow.py← BackfillWorkflow: paginated re-embed with continue-as-new ├── activities/ │ ├── ingest.py ← fetch_and_stage_chunks, embed_staged_chunk, index_document │ └── backfill.py ← read_source_batch, reembed_and_write, ensure_target_index └── extractors/ ├── base.py ← Extractor ABC + window() splitter + RawChunk ├── factory.py ← get_extractor(): extension → MIME → TextExtractor ├── markdown.py ← Section-aware markdown extractor ├── pdf.py ← PyPDF page extractor ├── csv_ext.py ← Row-group extractor └── text.py ← Plain text window splitter (fallback) . ",
+    "url": "/mdb-temporal-pra/low-level-design/#2-component-inventory",
+    
+    "relUrl": "/low-level-design/#2-component-inventory"
+  },"55": {
+    "doc": "Low-Level Design",
+    "title": "3. Data contracts",
+    "content": "Defined in pipeline/models.py. All contracts are plain Python @dataclasss — they serialize cleanly through Temporal’s default JSON data converter and as Kafka message payloads. ",
+    "url": "/mdb-temporal-pra/low-level-design/#3-data-contracts",
+    
+    "relUrl": "/low-level-design/#3-data-contracts"
+  },"56": {
+    "doc": "Low-Level Design",
+    "title": "S3Ref",
+    "content": "The atomic unit flowing into IngestWorkflow. Identifies a single object in S3 (or MinIO). @dataclass class S3Ref: bucket: str # S3 bucket name key: str # object key (path within bucket) s3_uri: str # \"s3://{bucket}/{key}\" — canonical identifier etag: str # object ETag for version tracking size: int # object size in bytes content_type: str # MIME type hint (used by extractor factory) . ",
+    "url": "/mdb-temporal-pra/low-level-design/#s3ref",
+    
+    "relUrl": "/low-level-design/#s3ref"
+  },"57": {
+    "doc": "Low-Level Design",
+    "title": "RawRecord",
+    "content": "Source-agnostic envelope for the raw Kafka topic. source identifies the producer type; other sources (RDBMS row, IoT payload, webhook) set payload instead of ref. @dataclass class RawRecord: source: str # \"s3\" | \"rdbms\" | \"iot\" | \"webhook\" | ... doc_id: str # stable sha1-derived identifier for this document ref: S3Ref | None # populated for S3/MinIO sources payload: str | None # populated for inline-text sources metadata: dict # source-specific metadata (table name, topic, tags, ...) . ",
+    "url": "/mdb-temporal-pra/low-level-design/#rawrecord",
+    
+    "relUrl": "/low-level-design/#rawrecord"
+  },"58": {
+    "doc": "Low-Level Design",
+    "title": "Chunk / EmbeddedChunk",
+    "content": "@dataclass class Chunk: doc_id: str # parent document identifier chunk_id: str # \"{doc_id}:{ordinal}\" — deterministic, workflow-resumable ordinal: int # position within the document text: str # chunk text (1200 chars default, configurable) content_hash: str # sha256 of this chunk's text (dedupe within a document) doc_content_hash: str# sha256 of the whole source object (version dedupe) source_uri: str # \"s3://\" URI for citation metadata: dict # extractor-specific (heading, page, row range, ...) @dataclass class EmbeddedChunk(Chunk): embedding: list[float] # 1024-dim Voyage vector model: str # model name used for embedding dim: int # embedding dimensionality . ",
+    "url": "/mdb-temporal-pra/low-level-design/#chunk--embeddedchunk",
+    
+    "relUrl": "/low-level-design/#chunk--embeddedchunk"
+  },"59": {
+    "doc": "Low-Level Design",
+    "title": "Document identity and deduplication",
+    "content": "def doc_id_for_uri(uri: str) -&gt; str: # SHA-1 of the URI → 16-char hex. Stable across re-uploads of the same key. return hashlib.sha1(uri.encode()).hexdigest()[:16] def sha256_hex(data: bytes | str) -&gt; str: # Used for content-hash dedupe: same bytes → skip re-embed. return hashlib.sha256(data).hexdigest() . fetch_and_stage_chunks short-circuits if knowledge already contains a doc with the same doc_id and doc_content_hash — identical bytes at the same key are never re-embedded. ",
+    "url": "/mdb-temporal-pra/low-level-design/#document-identity-and-deduplication",
+    
+    "relUrl": "/low-level-design/#document-identity-and-deduplication"
+  },"60": {
+    "doc": "Low-Level Design",
+    "title": "4. End-to-end data flow",
+    "content": "[Source] │ upload / write ▼ [MinIO / S3] ──── native S3 event ───▶ [Kafka: s3-events topic] │ Kafka Connect (mongo-sink connector) │ upsert by key ▼ [Atlas: temporal.sources] │ change stream │ ┌─────────────────┴─────────────────┐ │ Dev: trigger_listener.py │ │ Prod: ASP $https → trigger_api.py │ └─────────────────┬─────────────────┘ │ start IngestWorkflow(S3Ref) ▼ ┌─────────────────────────────────────┐ │ IngestWorkflow (Temporal) │ │ │ │ Activity 1: fetch_and_stage_chunks │ │ • GET s3://{bucket}/{key} │ │ • sha256 dedupe check │ │ • factory extractor → chunks │ │ • INSERT → temporal.chunks_staging│ │ │ │ Activity 2..N: embed_staged_chunk │ │ • one activity per chunk │ │ • idempotent (skip if embedded) │ │ • Voyage embed(text) → vector │ │ • UPDATE chunks_staging │ │ │ │ Activity N+1: index_document │ │ • UPSERT chunks → knowledge │ │ • DELETE stale ordinals │ │ • ensure_vector_index (idempotent│ │ • DELETE chunks_staging (cleanup)│ └─────────────────────────────────────┘ │ ▼ [Atlas: temporal.knowledge] [Atlas Vector Search Index] │ agent vector search ▼ [FastAPI /query → React UI] . ",
+    "url": "/mdb-temporal-pra/low-level-design/#4-end-to-end-data-flow",
+    
+    "relUrl": "/low-level-design/#4-end-to-end-data-flow"
+  },"61": {
+    "doc": "Low-Level Design",
+    "title": "5. Workflow design",
+    "content": " ",
+    "url": "/mdb-temporal-pra/low-level-design/#5-workflow-design",
+    
+    "relUrl": "/low-level-design/#5-workflow-design"
+  },"62": {
+    "doc": "Low-Level Design",
+    "title": "5.1 IngestWorkflow",
+    "content": "File: pipeline/workflows/ingest_workflow.py . Input: S3Ref, optional target_collection . Stages: . | # | Activity | Timeout | Retries | Idempotent | . | 1 | fetch_and_stage_chunks | 5 min | 5 | Yes — short-circuits on matching doc_content_hash | . | 2…N | embed_staged_chunk (one per chunk) | 2 min | 6 (exp backoff, max 30s) | Yes — skips if status == \"embedded\" and model matches | . | N+1 | index_document | 2 min | 6 | Yes — upsert by chunk_id, prune stale ordinals | . Resumability guarantee: Each chunk is a separate activity. If the worker crashes between chunk i and chunk i+1, Temporal replays the workflow history and skips all already-embedded chunks (the status == \"embedded\" check in embed_staged_chunk). Only the in-flight chunk is retried — no re-embedding of completed work. Update-in-place: Re-uploading the same S3 key with different content produces a new doc_content_hash. fetch_and_stage_chunks clears stale staging rows, the workflow re-embeds all new chunks, and index_document upserts them into knowledge and prunes chunks whose ordinal &gt;= new_n (stale chunks from a previously longer version). Workflow ID: derived from S3Ref.s3_uri — duplicate triggers for the same key within the workflow’s run window are deduplicated by Temporal. ",
+    "url": "/mdb-temporal-pra/low-level-design/#51-ingestworkflow",
+    
+    "relUrl": "/low-level-design/#51-ingestworkflow"
+  },"63": {
+    "doc": "Low-Level Design",
+    "title": "5.2 BackfillWorkflow",
+    "content": "File: pipeline/workflows/backfill_workflow.py . Trigger: model upgrade requiring a dimension change (e.g. voyage-3.5 1024-dim → new model). Design pattern: continue_as_new — the workflow re-starts itself with a cursor (after_id) after each batch. This keeps Temporal workflow history bounded regardless of collection size. Stages per batch: . | Activity | Description | . | ensure_target_index | Create the vector index on the green collection at the new dimension (once, before first batch) | . | read_source_batch | Paginated read of the active collection, 50 chunks at a time, sorted by _id | . | reembed_and_write (per doc) | Re-embed with new model, upsert into target collection | . Blue/green cutover: BackfillWorkflow writes exclusively to knowledge_v2 (green). The active collection pointer in temporal_config stays on knowledge (blue) until the operator runs make cutover TO=knowledge_v2. The agent reads the active pointer on every query — no restart needed. knowledge (blue) ──read──▶ BackfillWorkflow ──write──▶ knowledge_v2 (green) │ make cutover │ temporal_config.active = \"knowledge_v2\" . ",
+    "url": "/mdb-temporal-pra/low-level-design/#52-backfillworkflow",
+    
+    "relUrl": "/low-level-design/#52-backfillworkflow"
+  },"64": {
+    "doc": "Low-Level Design",
+    "title": "6. Activity design",
+    "content": "All activities follow three design rules: . | Idempotent — safe to retry at any point; re-running a completed activity produces the same result and no duplicate writes. | Heartbeating — long-running activities (embed_staged_chunk, reembed_and_write) call activity.heartbeat() so Temporal can detect stalled activities within the heartbeat_timeout (30s). | Sync execution — all activities use standard pymongo, voyageai, and boto3 clients (synchronous). The worker runs them in a ThreadPoolExecutor(max_workers=16), keeping the Temporal event loop free. | . ",
+    "url": "/mdb-temporal-pra/low-level-design/#6-activity-design",
+    
+    "relUrl": "/low-level-design/#6-activity-design"
+  },"65": {
+    "doc": "Low-Level Design",
+    "title": "Activity retry policy (embed activities)",
+    "content": "RetryPolicy( initial_interval=timedelta(seconds=2), backoff_coefficient=2.0, maximum_interval=timedelta(seconds=30), maximum_attempts=6, ) . Voyage AI rate-limit errors (429) and transient network errors are handled transparently. ",
+    "url": "/mdb-temporal-pra/low-level-design/#activity-retry-policy-embed-activities",
+    
+    "relUrl": "/low-level-design/#activity-retry-policy-embed-activities"
+  },"66": {
+    "doc": "Low-Level Design",
+    "title": "7. Extractor system",
+    "content": "File: pipeline/extractors/ . The extractor factory decouples file-type handling from the workflow. Adding a new format requires only a new extractor class — no workflow or activity changes. ",
+    "url": "/mdb-temporal-pra/low-level-design/#7-extractor-system",
+    
+    "relUrl": "/low-level-design/#7-extractor-system"
+  },"67": {
+    "doc": "Low-Level Design",
+    "title": "Base class",
+    "content": "class Extractor(ABC): name: str # identifies extractor in metadata chunk_size: int # configurable via settings chunk_overlap: int # configurable via settings @abstractmethod def pieces(self, body: bytes) -&gt; list[tuple[str, dict]]: \"\"\"Return (text, meta) pairs; ordinal assignment handled by base.\"\"\" def chunk(self, body: bytes) -&gt; list[RawChunk]: \"\"\"Call pieces(), assign ordinals, drop blanks.\"\"\" . ",
+    "url": "/mdb-temporal-pra/low-level-design/#base-class",
+    
+    "relUrl": "/low-level-design/#base-class"
+  },"68": {
+    "doc": "Low-Level Design",
+    "title": "Chunking strategy",
+    "content": "The base provides a window() splitter — a character-window with overlap: . def window(text: str, size: int, overlap: int) -&gt; list[str]: step = max(1, size - overlap) return [text[i : i + size] for i in range(0, len(text), step) if text[i : i + size].strip()] . Default: chunk_size=1200, chunk_overlap=150 (configurable in .env). ",
+    "url": "/mdb-temporal-pra/low-level-design/#chunking-strategy",
+    
+    "relUrl": "/low-level-design/#chunking-strategy"
+  },"69": {
+    "doc": "Low-Level Design",
+    "title": "Registered extractors",
+    "content": "| Extension / MIME | Extractor | Chunking strategy | . | .md, .markdown / text/markdown | MarkdownExtractor | Section-aware: splits on # headings, then window-splits long sections | . | .pdf / application/pdf | PdfExtractor | PyPDF page-by-page, window-splits long pages | . | .csv / text/csv, application/csv | CsvExtractor | Row-group batching | . | anything else | TextExtractor | Plain window split (fallback) | . ",
+    "url": "/mdb-temporal-pra/low-level-design/#registered-extractors",
+    
+    "relUrl": "/low-level-design/#registered-extractors"
+  },"70": {
+    "doc": "Low-Level Design",
+    "title": "Factory resolution",
+    "content": "def get_extractor(key: str, content_type: str = \"\") -&gt; Extractor: ext = key.rsplit(\".\", 1)[-1].lower() cls = _BY_EXT.get(ext) \\ or _BY_MIME.get(content_type.split(\";\")[0].strip()) \\ or TextExtractor return cls(chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap) . Resolution order: file extension → MIME type → TextExtractor fallback. ",
+    "url": "/mdb-temporal-pra/low-level-design/#factory-resolution",
+    
+    "relUrl": "/low-level-design/#factory-resolution"
+  },"71": {
+    "doc": "Low-Level Design",
+    "title": "8. MongoDB data model",
+    "content": "Database: temporal (configurable via MONGODB_DB) . ",
+    "url": "/mdb-temporal-pra/low-level-design/#8-mongodb-data-model",
+    
+    "relUrl": "/low-level-design/#8-mongodb-data-model"
+  },"72": {
+    "doc": "Low-Level Design",
+    "title": "sources collection",
+    "content": "Written by the Kafka Sink Connector. One document per S3 object key (upsert by key). { \"_id\": \"ObjectId\", \"Records\": [ { \"s3\": { \"bucket\": { \"name\": \"temporal-datasources\" }, \"object\": { \"key\": \"docs%2Fmy-doc.pdf\", \"size\": 45123, \"eTag\": \"abc123\" } } } ] } . The trigger layer (s3util.py) parses Records[*].s3 → S3Ref, URL-decoding the key. ",
+    "url": "/mdb-temporal-pra/low-level-design/#sources-collection",
+    
+    "relUrl": "/low-level-design/#sources-collection"
+  },"73": {
+    "doc": "Low-Level Design",
+    "title": "chunks_staging collection",
+    "content": "Transient. Created by fetch_and_stage_chunks, updated by embed_staged_chunk, deleted by index_document. Survives worker crashes — the workflow resumes from the correct chunk. { \"doc_id\": \"a3f9c1d2e4b5f678\", \"chunk_id\": \"a3f9c1d2e4b5f678:0\", \"ordinal\": 0, \"text\": \"...\", \"content_hash\": \"sha256hex\", \"doc_content_hash\": \"sha256hex\", \"source_uri\": \"s3://temporal-datasources/docs/my-doc.pdf\", \"metadata\": { \"extractor\": \"pdf\", \"page\": 1 }, \"status\": \"pending | embedded\", \"embedding\": [0.123, ...], \"model\": \"voyage-3.5\", \"dim\": 1024 } . Indexes needed: { doc_id: 1 }, { chunk_id: 1 } (unique), { doc_id: 1, status: 1 }. ",
+    "url": "/mdb-temporal-pra/low-level-design/#chunks_staging-collection",
+    
+    "relUrl": "/low-level-design/#chunks_staging-collection"
+  },"74": {
+    "doc": "Low-Level Design",
+    "title": "knowledge collection (active, blue)",
+    "content": "The searchable store. Upserted by index_document using chunk_id as the upsert key. { \"_id\": \"ObjectId\", \"doc_id\": \"a3f9c1d2e4b5f678\", \"chunk_id\": \"a3f9c1d2e4b5f678:0\", \"ordinal\": 0, \"text\": \"...\", \"content_hash\": \"sha256hex\", \"doc_content_hash\": \"sha256hex\", \"embedding\": [0.123, ...], ← 1024-dim Voyage vector \"model\": \"voyage-3.5\", \"dim\": 1024, \"source_uri\": \"s3://temporal-datasources/docs/my-doc.pdf\", \"metadata\": { \"extractor\": \"pdf\", \"page\": 1 } } . ",
+    "url": "/mdb-temporal-pra/low-level-design/#knowledge-collection-active-blue",
+    
+    "relUrl": "/low-level-design/#knowledge-collection-active-blue"
+  },"75": {
+    "doc": "Low-Level Design",
+    "title": "knowledge_v2 collection (green, backfill target)",
+    "content": "Same schema as knowledge. Populated by BackfillWorkflow. Becomes active after make cutover. ",
+    "url": "/mdb-temporal-pra/low-level-design/#knowledge_v2-collection-green-backfill-target",
+    
+    "relUrl": "/low-level-design/#knowledge_v2-collection-green-backfill-target"
+  },"76": {
+    "doc": "Low-Level Design",
+    "title": "temporal_config collection",
+    "content": "Single document: the active collection/index pointer. Read by the agent on every query. { \"_id\": \"active\", \"collection\": \"knowledge\", \"index\": \"temporalai_search_index\" } . ",
+    "url": "/mdb-temporal-pra/low-level-design/#temporal_config-collection",
+    
+    "relUrl": "/low-level-design/#temporal_config-collection"
+  },"77": {
+    "doc": "Low-Level Design",
+    "title": "agent_memory collection",
+    "content": "Written by the deep agent after every query. Stores conversation history, citations, and synthesized answers. { \"_id\": \"ObjectId\", \"query\": \"what does Temporal own in this architecture?\", \"answer\": \"...\", \"sources\": [{ \"chunk_id\": \"...\", \"text\": \"...\", \"score\": 0.92 }], \"model\": \"voyage-3.5\", \"timestamp\": \"ISODate\" } . ",
+    "url": "/mdb-temporal-pra/low-level-design/#agent_memory-collection",
+    
+    "relUrl": "/low-level-design/#agent_memory-collection"
+  },"78": {
+    "doc": "Low-Level Design",
+    "title": "9. Atlas Vector Search index",
+    "content": "File: pipeline/search_index.py . Index definition (created idempotently by ensure_vector_index at the end of every index_document activity): . { \"fields\": [ { \"type\": \"vector\", \"path\": \"embedding\", \"numDimensions\": 1024, \"similarity\": \"cosine\" }, { \"type\": \"filter\", \"path\": \"doc_id\" }, { \"type\": \"filter\", \"path\": \"source_uri\" } ] } . The filter fields allow the agent to scope vector search to a specific document or source URI without a full collection scan. ensure_vector_index is idempotent — it lists existing indexes and skips creation if the index already exists. The BackfillWorkflow calls ensure_target_index once before writing to the green collection so the new-dimension index is ready before any chunk is written. ",
+    "url": "/mdb-temporal-pra/low-level-design/#9-atlas-vector-search-index",
+    
+    "relUrl": "/low-level-design/#9-atlas-vector-search-index"
+  },"79": {
+    "doc": "Low-Level Design",
+    "title": "10. Trigger layer",
+    "content": "Two implementations of the same contract: watch sources → parse S3Ref → start IngestWorkflow. ",
+    "url": "/mdb-temporal-pra/low-level-design/#10-trigger-layer",
+    
+    "relUrl": "/low-level-design/#10-trigger-layer"
+  },"80": {
+    "doc": "Low-Level Design",
+    "title": "Local dev — trigger_listener.py",
+    "content": "Uses PyMongo’s collection.watch() (change stream) to watch temporal.sources for inserts, replaces, and updates. Calls start_ingest(temporal_client, ref) directly. pipeline = [{\"$match\": {\"operationType\": {\"$in\": [\"insert\", \"replace\", \"update\"]}}}] with coll.watch(pipeline, full_document=\"updateLookup\") as stream: change = await asyncio.to_thread(stream.next) for ref in refs_from_s3_event(change[\"fullDocument\"]): await start_ingest(temporal, ref) . ",
+    "url": "/mdb-temporal-pra/low-level-design/#local-dev--trigger_listenerpy",
+    
+    "relUrl": "/low-level-design/#local-dev--trigger_listenerpy"
+  },"81": {
+    "doc": "Low-Level Design",
+    "title": "Production — ASP + trigger_api.py",
+    "content": "Atlas Stream Processing watches temporal.sources and $https-POSTs each new record to POST /ingest-trigger on trigger_api.py. The endpoint parses the body into an S3Ref and calls start_ingest. @app.post(\"/ingest-trigger\") async def ingest_trigger(body: dict): ref = S3Ref.make(bucket=body[\"bucket\"], key=urllib.parse.unquote_plus(body[\"key\"])) wf_id = await start_ingest(await get_client(), ref) return {\"workflow_id\": wf_id} . Serverless option: the $https POST can target an AWS Lambda function running a Temporal Serverless Worker. ASP fires the trigger → Lambda cold-starts a worker → IngestWorkflow runs to completion with full Temporal durability. No always-on worker process required. ",
+    "url": "/mdb-temporal-pra/low-level-design/#production--asp--trigger_apipy",
+    
+    "relUrl": "/low-level-design/#production--asp--trigger_apipy"
+  },"82": {
+    "doc": "Low-Level Design",
+    "title": "11. Deep agent",
+    "content": "Files: agent/api.py, agent/retrieval.py, agent/ui/ . ",
+    "url": "/mdb-temporal-pra/low-level-design/#11-deep-agent",
+    
+    "relUrl": "/low-level-design/#11-deep-agent"
+  },"83": {
+    "doc": "Low-Level Design",
+    "title": "Query flow",
+    "content": "React UI ──POST /query──▶ FastAPI ──▶ read temporal_config (active collection) ──▶ Voyage embed(query) ──▶ Atlas $vectorSearch (top-k chunks) ──▶ Voyage rerank(query, chunks) ──▶ Anthropic Claude (RAG synthesis) ──▶ INSERT agent_memory ──▶ streaming SSE response to UI . ",
+    "url": "/mdb-temporal-pra/low-level-design/#query-flow",
+    
+    "relUrl": "/low-level-design/#query-flow"
+  },"84": {
+    "doc": "Low-Level Design",
+    "title": "Vector search query",
+    "content": "pipeline = [ { \"$vectorSearch\": { \"index\": active_index, \"path\": \"embedding\", \"queryVector\": query_embedding, \"numCandidates\": 150, \"limit\": 10, } }, { \"$project\": { \"text\": 1, \"source_uri\": 1, \"metadata\": 1, \"score\": { \"$meta\": \"vectorSearchScore\" } } } ] . ",
+    "url": "/mdb-temporal-pra/low-level-design/#vector-search-query",
+    
+    "relUrl": "/low-level-design/#vector-search-query"
+  },"85": {
+    "doc": "Low-Level Design",
+    "title": "Reranking",
+    "content": "The top-10 vector search results are passed to Voyage rerank-2.5 with the original query. The reranked top-5 are used as context for Claude synthesis. ",
+    "url": "/mdb-temporal-pra/low-level-design/#reranking",
+    
+    "relUrl": "/low-level-design/#reranking"
+  },"86": {
+    "doc": "Low-Level Design",
+    "title": "12. Configuration reference",
+    "content": "All settings live in .env (loaded by pipeline/config.py via Pydantic Settings). | Variable | Default | Description | . | MONGODB_URI | — | Atlas connection string (required) | . | MONGODB_DB | temporal | Database name | . | SRC_COLLECTION | sources | Kafka sink landing collection | . | CHUNKS_COLLECTION | chunks_staging | Transient staging between workflow stages | . | KNOWLEDGE_COLLECTION | knowledge | Active (blue) embedded knowledge store | . | KNOWLEDGE_V2_COLLECTION | knowledge_v2 | Green backfill target | . | CONFIG_COLLECTION | temporal_config | Active pointer document | . | MEMORY_COLLECTION | agent_memory | Agent write-back | . | VOYAGE_MODEL | voyage-3.5 | Embedding model (1024-dim) | . | VOYAGE_RERANK_MODEL | rerank-2.5 | Reranking model | . | EMBED_DIM | 1024 | Embedding dimensionality (must match model) | . | ANSWER_MODEL | claude-sonnet-4-5 | Claude model for synthesis | . | CHUNK_SIZE | 1200 | Maximum characters per chunk | . | CHUNK_OVERLAP | 150 | Overlap characters between adjacent chunks | . | TEMPORAL_ADDRESS | localhost:7233 | Temporal server address | . | TEMPORAL_TASK_QUEUE | temporal-pipeline | Worker task queue | . | KAFKA_BOOTSTRAP | localhost:29092 | Kafka broker bootstrap servers | . | S3_ENDPOINT_URL | http://localhost:9000 | MinIO endpoint (blank = real AWS S3) | . | S3_BUCKET | temporal-datasources | Source bucket | . ",
+    "url": "/mdb-temporal-pra/low-level-design/#12-configuration-reference",
+    
+    "relUrl": "/low-level-design/#12-configuration-reference"
+  },"87": {
+    "doc": "Low-Level Design",
+    "title": "13. Scaling to multiple data sources",
+    "content": "The architecture is designed with a source-agnostic Kafka boundary. Any system that can produce records to a Kafka topic can feed the pipeline without modifying workflows or activities. ",
+    "url": "/mdb-temporal-pra/low-level-design/#13-scaling-to-multiple-data-sources",
+    
+    "relUrl": "/low-level-design/#13-scaling-to-multiple-data-sources"
+  },"88": {
+    "doc": "Low-Level Design",
+    "title": "Current source: MinIO / S3",
+    "content": "S3 upload → native S3 event notification → Kafka (s3-events topic) → MongoDB Sink Connector → sources → change stream → IngestWorkflow(S3Ref) . ",
+    "url": "/mdb-temporal-pra/low-level-design/#current-source-minio--s3",
+    
+    "relUrl": "/low-level-design/#current-source-minio--s3"
+  },"89": {
+    "doc": "Low-Level Design",
+    "title": "Adding a new source: general pattern",
+    "content": "Every new source follows the same three-step pattern: . Step 1: Produce an event to Kafka (using a connector or producer) Step 2: MongoDB Sink Connector (or a custom consumer) lands it in `temporal.sources` Step 3: trigger_listener / ASP detects the change → start IngestWorkflow . The RawRecord.source field and S3Ref/payload union in models.py already accommodate non-S3 sources with inline payloads. Extend s3util.py (or add a parallel parser) to extract the relevant fields for the new source type. ",
+    "url": "/mdb-temporal-pra/low-level-design/#adding-a-new-source-general-pattern",
+    
+    "relUrl": "/low-level-design/#adding-a-new-source-general-pattern"
+  },"90": {
+    "doc": "Low-Level Design",
+    "title": "Source extension examples",
+    "content": "RDBMS (MySQL / Postgres via Debezium) . MySQL binlog → Debezium Kafka connector → Kafka (cdc-events topic) → Custom consumer OR Kafka Connect JDBC sink → temporal.sources → trigger_listener → IngestWorkflow(RawRecord{source=\"rdbms\", payload=row_json}) . The fetch_and_stage_chunks activity inspects ref.source to decide how to retrieve the object body. For RDBMS, the row JSON is inlined in payload — no S3 fetch required. Add a branch in fetch_and_stage_chunks: . if ref.source == \"rdbms\": body = ref.payload.encode() content_type = \"application/json\" else: obj = s3_client().get_object(Bucket=ref.bucket, Key=ref.key) body = obj[\"Body\"].read() . IoT / time-series (MQTT / Kafka native) . IoT device → MQTT broker → Kafka MQTT connector → Kafka (iot-events topic) → MongoDB Sink Connector → temporal.sources → trigger_listener → IngestWorkflow(RawRecord{source=\"iot\", payload=json}) . IoT payloads are typically small JSON blobs. A JsonExtractor (see §14) handles them directly. Batch multiple readings into a single RawRecord using a tumbling window in ASP before writing to sources to reduce workflow starts. MongoDB change stream (existing Atlas data) . Atlas collection (operational) → Atlas Stream Processing change stream → $https POST to trigger_api.py / ASP processor → IngestWorkflow(RawRecord{source=\"mongodb\", payload=doc_json}) . This path uses Atlas Stream Processing natively without Kafka. The $project stage in the ASP pipeline extracts the relevant fields and posts them directly to the trigger endpoint. Webhook / HTTP API . External system (Notion, Confluence, GitHub) → webhook POST → trigger_api.py /ingest-trigger → IngestWorkflow(S3Ref or RawRecord) . For large files: the webhook handler uploads the content to S3 first, then constructs an S3Ref. For small content (&lt; 1 MB): inline as RawRecord.payload. AWS SQS (production S3 events) . The config already supports SQS-driven S3 events: . # config.py sqs_queue_url: str = \"\" s3_source: str = \"auto\" # auto | minio | sqs | poll def resolved_source(self) -&gt; str: if self.s3_endpoint_url: return \"minio\" if self.sqs_queue_url: return \"sqs\" return \"poll\" . Set SQS_QUEUE_URL in .env to switch from MinIO to real SQS-driven S3 events. ",
+    "url": "/mdb-temporal-pra/low-level-design/#source-extension-examples",
+    
+    "relUrl": "/low-level-design/#source-extension-examples"
+  },"91": {
+    "doc": "Low-Level Design",
+    "title": "Multi-source worker scaling",
+    "content": "The Temporal worker is stateless. Scale horizontally by running additional worker processes pointing at the same task queue: . # Start N additional workers (each handles IngestWorkflow + BackfillWorkflow) uv run python -m pipeline.worker &amp; # worker 1 uv run python -m pipeline.worker &amp; # worker 2 uv run python -m pipeline.worker &amp; # worker N . Temporal distributes workflow tasks across all available workers automatically. Per-worker concurrency is set by ThreadPoolExecutor(max_workers=16) in worker.py — tune to the embedding API rate limit. ",
+    "url": "/mdb-temporal-pra/low-level-design/#multi-source-worker-scaling",
+    
+    "relUrl": "/low-level-design/#multi-source-worker-scaling"
+  },"92": {
+    "doc": "Low-Level Design",
+    "title": "14. Scaling to multiple data types",
+    "content": "The extractor factory (pipeline/extractors/factory.py) is the sole extension point for new file or data types. The workflow and all activities are type-agnostic — they receive bytes and call get_extractor(key, content_type).chunk(body). ",
+    "url": "/mdb-temporal-pra/low-level-design/#14-scaling-to-multiple-data-types",
+    
+    "relUrl": "/low-level-design/#14-scaling-to-multiple-data-types"
+  },"93": {
+    "doc": "Low-Level Design",
+    "title": "Adding a new extractor",
+    "content": ". | Create pipeline/extractors/my_format.py: | . from .base import Extractor, RawChunk, window class MyFormatExtractor(Extractor): name = \"my_format\" def pieces(self, body: bytes) -&gt; list[tuple[str, dict]]: # Parse body, return list of (text_segment, metadata_dict) results = [] for section in parse_my_format(body): for window_text in window(section.text, self.chunk_size, self.chunk_overlap): results.append((window_text, {\"section\": section.title})) return results . | Register in pipeline/extractors/factory.py: | . from .my_format import MyFormatExtractor _BY_EXT[\"myext\"] = MyFormatExtractor _BY_MIME[\"application/x-my-format\"] = MyFormatExtractor . | No changes required to workflows, activities, or the Atlas data model. | . ",
+    "url": "/mdb-temporal-pra/low-level-design/#adding-a-new-extractor",
+    
+    "relUrl": "/low-level-design/#adding-a-new-extractor"
+  },"94": {
+    "doc": "Low-Level Design",
+    "title": "Current extractors and their chunking strategies",
+    "content": "| Extractor | pieces() strategy | Metadata emitted | . | MarkdownExtractor | Split on #/##/### headings; window-split long sections | heading, level | . | PdfExtractor | PyPDF page iteration; window-split long pages | page | . | CsvExtractor | Group rows into batches; emit each batch as one chunk | row_start, row_end | . | TextExtractor | Single window() pass over the entire body | — | . ",
+    "url": "/mdb-temporal-pra/low-level-design/#current-extractors-and-their-chunking-strategies",
+    
+    "relUrl": "/low-level-design/#current-extractors-and-their-chunking-strategies"
+  },"95": {
+    "doc": "Low-Level Design",
+    "title": "Planned extractor extensions",
+    "content": "| Format | Notes | . | JsonExtractor | Flatten nested JSON; embed per top-level object or configurable depth | . | HtmlExtractor | Strip tags, split on semantic blocks (&lt;article&gt;, &lt;section&gt;, &lt;p&gt;) | . | DocxExtractor | python-docx paragraph extraction | . | XlsxExtractor | openpyxl sheet-to-row-group batching | . | AudioTranscriptExtractor | Accept a transcript JSON (from Whisper/AWS Transcribe); treat as text | . | SqlResultExtractor | Accept a JSON array of rows from an RDBMS query; one chunk per N rows | . ",
+    "url": "/mdb-temporal-pra/low-level-design/#planned-extractor-extensions",
+    
+    "relUrl": "/low-level-design/#planned-extractor-extensions"
+  },"96": {
+    "doc": "Low-Level Design",
+    "title": "Chunking parameter tuning",
+    "content": "| Use case | Recommended CHUNK_SIZE | Recommended CHUNK_OVERLAP | . | Long narrative docs (PDF, markdown) | 1200 | 150 | . | Short structured records (CSV, JSON) | 512 | 64 | . | Code files | 800 | 200 (preserve function context) | . | IoT telemetry batches | 400 | 0 (batches are atomic) | . ",
+    "url": "/mdb-temporal-pra/low-level-design/#chunking-parameter-tuning",
+    
+    "relUrl": "/low-level-design/#chunking-parameter-tuning"
+  },"97": {
+    "doc": "Low-Level Design",
+    "title": "15. Extension patterns and future sources",
+    "content": " ",
+    "url": "/mdb-temporal-pra/low-level-design/#15-extension-patterns-and-future-sources",
+    
+    "relUrl": "/low-level-design/#15-extension-patterns-and-future-sources"
+  },"98": {
+    "doc": "Low-Level Design",
+    "title": "Multi-tenant / multi-database",
+    "content": "Route different sources to different Atlas databases or collections by parameterizing IngestWorkflow(ref, target_collection=\"customer_a_knowledge\"). The target_collection argument threads through all three activities. The agent reads the active collection from temporal_config — point it at the tenant-specific collection. ",
+    "url": "/mdb-temporal-pra/low-level-design/#multi-tenant--multi-database",
+    
+    "relUrl": "/low-level-design/#multi-tenant--multi-database"
+  },"99": {
+    "doc": "Low-Level Design",
+    "title": "Parallel ingestion",
+    "content": "Fan out multiple IngestWorkflow starts in a parent workflow or from the trigger layer: . # Start all refs from a batch event concurrently await asyncio.gather(*[start_ingest(client, ref) for ref in refs]) . Each IngestWorkflow instance is independent — they share the same chunks_staging and knowledge collections but operate on disjoint doc_id namespaces. ",
+    "url": "/mdb-temporal-pra/low-level-design/#parallel-ingestion",
+    
+    "relUrl": "/low-level-design/#parallel-ingestion"
+  },"100": {
+    "doc": "Low-Level Design",
+    "title": "Incremental sync (change-driven dedupe)",
+    "content": "The content-hash check in fetch_and_stage_chunks provides built-in incremental sync: . | Same key, same content → status: unchanged, workflow returns immediately, no embedding call. | Same key, new content → full re-embed, index_document updates in place and prunes stale chunks. | New key → full ingest. | . For RDBMS sources, hash the serialized row JSON as the doc_content_hash to get the same behaviour for database row updates. ",
+    "url": "/mdb-temporal-pra/low-level-design/#incremental-sync-change-driven-dedupe",
+    
+    "relUrl": "/low-level-design/#incremental-sync-change-driven-dedupe"
+  },"101": {
+    "doc": "Low-Level Design",
+    "title": "Scheduled full re-sync",
+    "content": "Use a Temporal scheduled workflow (cron) to poll a source and submit IngestWorkflow for each object, relying on the content-hash dedupe to skip unchanged documents: . @workflow.defn class FullSyncWorkflow: @workflow.run async def run(self, prefix: str) -&gt; dict: keys = await workflow.execute_activity(list_s3_keys, args=[prefix], ...) for key in keys: ref = S3Ref.make(bucket=settings.s3_bucket, key=key) await workflow.execute_child_workflow(IngestWorkflow, args=[ref], ...) return {\"synced\": len(keys)} . ",
+    "url": "/mdb-temporal-pra/low-level-design/#scheduled-full-re-sync",
+    
+    "relUrl": "/low-level-design/#scheduled-full-re-sync"
+  },"102": {
+    "doc": "Low-Level Design",
+    "title": "Model A/B testing",
+    "content": "Run BackfillWorkflow into a third collection (knowledge_v3) with a different model. Point a shadow agent at knowledge_v3 without cutting over production, compare retrieval quality, then cut over when satisfied. ",
+    "url": "/mdb-temporal-pra/low-level-design/#model-ab-testing",
+    
+    "relUrl": "/low-level-design/#model-ab-testing"
+  },"103": {
+    "doc": "Low-Level Design",
+    "title": "Observability hooks",
+    "content": "Each activity emits structured log lines via activity.logger. Add a MongoDB sink to Temporal’s visibility store (or use Temporal Cloud’s built-in search) to query workflow status by source_uri, doc_id, or extractor. ",
+    "url": "/mdb-temporal-pra/low-level-design/#observability-hooks",
+    
+    "relUrl": "/low-level-design/#observability-hooks"
+  }
+}

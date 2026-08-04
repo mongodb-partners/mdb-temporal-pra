@@ -1,0 +1,1078 @@
+
+
+<!DOCTYPE html>
+
+<html lang="en-US">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge">
+
+  <link rel="stylesheet" href="/mdb-temporal-pra/assets/css/just-the-docs-default.css">
+
+  <link rel="stylesheet" href="/mdb-temporal-pra/assets/css/just-the-docs-head-nav.css" id="jtd-head-nav-stylesheet">
+
+  <style id="jtd-nav-activation">
+  
+
+    
+    .site-nav > ul.nav-list:first-child > li:not(:nth-child(3)) > a,
+    .site-nav > ul.nav-list:first-child > li > ul > li a {
+      background-image: none;
+    }
+
+    .site-nav > ul.nav-list:not(:first-child) a,
+    .site-nav li.external a {
+      background-image: none;
+    }
+
+    .site-nav > ul.nav-list:first-child > li:nth-child(3) > a {
+      font-weight: 600;
+      text-decoration: none;
+    }.site-nav > ul.nav-list:first-child > li:nth-child(3) > button svg {
+      transform: rotate(-90deg);
+    }.site-nav > ul.nav-list:first-child > li.nav-list-item:nth-child(3) > ul.nav-list {
+      display: block;
+    }
+  </style>
+
+  
+
+  
+    <script src="/mdb-temporal-pra/assets/js/vendor/lunr.min.js"></script>
+  
+
+  <script src="/mdb-temporal-pra/assets/js/just-the-docs.js"></script>
+
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  
+
+
+
+  <!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>Getting Started | MongoDB × Temporal</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="Getting Started" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Prerequisites, API key setup, local spin-up, and cloud infra references — everything a new developer needs to run the stack." />
+<meta name="twitter:description" property="og:description" content="Prerequisites, API key setup, local spin-up, and cloud infra references — everything a new developer needs to run the stack." />
+<link rel="canonical" href="https://mongodb-partners.github.io/mdb-temporal-pra/getting-started/" />
+<meta property="og:url" content="https://mongodb-partners.github.io/mdb-temporal-pra/getting-started/" />
+<meta property="og:site_name" content="MongoDB × Temporal" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Getting Started" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"Prerequisites, API key setup, local spin-up, and cloud infra references — everything a new developer needs to run the stack.","headline":"Getting Started","url":"https://mongodb-partners.github.io/mdb-temporal-pra/getting-started/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+  
+
+</head>
+
+<body>
+  <a class="skip-to-main" href="#main-content">Skip to main content</a>
+  <svg xmlns="http://www.w3.org/2000/svg" class="d-none">
+  <symbol id="svg-link" viewBox="0 0 24 24">
+  <title>Link</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-link">
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+  </svg>
+</symbol>
+
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+  <title>Menu</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu">
+    <line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line>
+  </svg>
+</symbol>
+
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+  <title>Expand</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-right">
+    <polyline points="9 18 15 12 9 6"></polyline>
+  </svg>
+</symbol>
+
+  <!-- Feather. MIT License: https://github.com/feathericons/feather/blob/master/LICENSE -->
+<symbol id="svg-external-link" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-external-link">
+  <title id="svg-external-link-title">(external link)</title>
+  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line>
+</symbol>
+
+  
+    <symbol id="svg-doc" viewBox="0 0 24 24">
+  <title>Document</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-file">
+    <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline>
+  </svg>
+</symbol>
+
+    <symbol id="svg-search" viewBox="0 0 24 24">
+  <title>Search</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-search">
+    <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+  </svg>
+</symbol>
+
+  
+  
+    <!-- Bootstrap Icons. MIT License: https://github.com/twbs/icons/blob/main/LICENSE.md -->
+<symbol id="svg-copy" viewBox="0 0 16 16">
+  <title>Copy</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-clipboard" viewBox="0 0 16 16">
+    <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/>
+    <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/>
+  </svg>
+</symbol>
+<symbol id="svg-copied" viewBox="0 0 16 16">
+  <title>Copied</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-clipboard-check-fill" viewBox="0 0 16 16">
+    <path d="M6.5 0A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3Zm3 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3Z"/>
+    <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1A2.5 2.5 0 0 1 9.5 5h-3A2.5 2.5 0 0 1 4 2.5v-1Zm6.854 7.354-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 0 1 .708-.708L7.5 10.793l2.646-2.647a.5.5 0 0 1 .708.708Z"/>
+  </svg>
+</symbol>
+
+  
+</svg>
+
+  
+    <div class="side-bar">
+  <div class="site-header" role="banner">
+    <a href="/mdb-temporal-pra/" class="site-title lh-tight">
+  MongoDB × Temporal
+
+</a>
+    <button id="menu-button" class="site-button btn-reset" aria-label="Toggle menu" aria-pressed="false">
+      <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use xlink:href="#svg-menu"></use></svg>
+    </button>
+  </div>
+
+  <nav aria-label="Main" id="site-nav" class="site-nav">
+  
+  
+    <ul class="nav-list"><li class="nav-list-item"><a href="/mdb-temporal-pra/" class="nav-list-link">Home</a></li><li class="nav-list-item"><a href="/mdb-temporal-pra/architecture/" class="nav-list-link">Architecture</a></li><li class="nav-list-item"><a href="/mdb-temporal-pra/getting-started/" class="nav-list-link">Getting Started</a></li><li class="nav-list-item"><a href="/mdb-temporal-pra/low-level-design/" class="nav-list-link">Low-Level Design</a></li></ul>
+  
+</nav>
+
+
+
+
+  
+  
+    <footer class="site-footer">
+      This site uses <a href="https://github.com/just-the-docs/just-the-docs">Just the Docs</a>, a documentation theme for Jekyll.
+    </footer>
+  
+</div>
+
+  
+  <div class="main" id="top">
+    <div id="main-header" class="main-header">
+  
+    
+
+<div class="search" role="search">
+  <div class="search-input-wrap">
+    <input type="text" id="search-input" class="search-input" tabindex="0" placeholder="Search MongoDB × Temporal" aria-label="Search MongoDB × Temporal" autocomplete="off">
+    <label for="search-input" class="search-label"><svg viewBox="0 0 24 24" class="search-icon"><use xlink:href="#svg-search"></use></svg></label>
+  </div>
+  <div id="search-results" class="search-results"></div>
+</div>
+
+  
+  
+  
+    <nav aria-label="Auxiliary" class="aux-nav">
+  <ul class="aux-nav-list">
+    
+      <li class="aux-nav-list-item">
+        <a href="https://github.com/mongodb-partners/mdb-temporal-pra" class="site-button"
+          
+          target="_blank" rel="noopener noreferrer"
+          
+        >
+          View on GitHub
+        </a>
+      </li>
+    
+  </ul>
+</nav>
+
+  
+</div>
+
+    <div class="main-content-wrap">
+      
+      <div id="main-content" class="main-content">
+        <main>
+          
+            <h1 class="no_toc" id="getting-started--developer-setup-guide">
+  
+  
+    <a href="#getting-started--developer-setup-guide" class="anchor-heading" aria-labelledby="getting-started--developer-setup-guide"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Getting Started — Developer Setup Guide
+  
+  
+</h1>
+    
+
+<p>Everything a new developer needs to spin up this repo locally and understand the production
+cloud setup.</p><hr />
+<h2 id="table-of-contents">
+  
+  
+    <a href="#table-of-contents" class="anchor-heading" aria-labelledby="table-of-contents"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Table of contents
+  
+  
+</h2>
+    
+
+<ul>
+  <li><a href="#prerequisites">Prerequisites</a></li>
+  <li><a href="#1-mongodb-atlas-setup">1. MongoDB Atlas setup</a></li>
+  <li><a href="#2-voyage-ai-api-key">2. Voyage AI API key</a></li>
+  <li><a href="#3-anthropic-api-key">3. Anthropic API key</a></li>
+  <li><a href="#4-environment-configuration">4. Environment configuration</a></li>
+  <li><a href="#5-local-setup-make-setup">5. Local setup (make setup)</a></li>
+  <li><a href="#6-local-docker-infra--kafka--minio">6. Local Docker infra — Kafka + MinIO</a></li>
+  <li><a href="#7-run-the-full-stack">7. Run the full stack</a></li>
+  <li><a href="#8-verify-ingestion">8. Verify ingestion</a></li>
+  <li><a href="#9-backfill--model-cutover">9. Backfill + model cutover</a></li>
+  <li><a href="#10-atlas-stream-processing-production-trigger">10. Atlas Stream Processing (production trigger)</a></li>
+  <li><a href="#cloud-infra-references">Cloud infra references</a></li>
+  <li><a href="#maintaining-this-documentation-site">Maintaining this documentation site</a></li>
+</ul><hr />
+<h2 id="prerequisites">
+  
+  
+    <a href="#prerequisites" class="anchor-heading" aria-labelledby="prerequisites"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Prerequisites
+  
+  
+</h2>
+    
+
+<p>Install these tools before running anything:</p>
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>Tool</th>
+      <th>Version</th>
+      <th>Install</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>uv</strong></td>
+      <td>latest</td>
+      <td><code class="language-plaintext highlighter-rouge">curl -LsSf https://astral.sh/uv/install.sh \| sh</code> — <a href="https://docs.astral.sh/uv/getting-started/installation/">docs</a></td>
+    </tr>
+    <tr>
+      <td><strong>Docker Desktop</strong></td>
+      <td>≥ 4.x</td>
+      <td><a href="https://www.docker.com/products/docker-desktop/">docker.com/products/docker-desktop</a></td>
+    </tr>
+    <tr>
+      <td><strong>Temporal CLI</strong></td>
+      <td>latest</td>
+      <td><code class="language-plaintext highlighter-rouge">brew install temporal</code> or <a href="https://docs.temporal.io/cli">docs.temporal.io/cli</a></td>
+    </tr>
+    <tr>
+      <td><strong>Node.js</strong></td>
+      <td>≥ 20</td>
+      <td><code class="language-plaintext highlighter-rouge">brew install node</code> or <a href="https://nodejs.org/">nodejs.org</a></td>
+    </tr>
+    <tr>
+      <td><strong>mongosh</strong></td>
+      <td>latest</td>
+      <td><code class="language-plaintext highlighter-rouge">brew install mongosh</code> — needed for Atlas Stream Processing setup</td>
+    </tr>
+  </tbody>
+</table></div>
+
+<p>Verify:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>uv <span class="nt">--version</span>
+docker <span class="nt">--version</span>
+temporal <span class="nt">--version</span>
+node <span class="nt">--version</span>
+</code></pre></div></div><hr />
+<h2 id="1-mongodb-atlas-setup">
+  
+  
+    <a href="#1-mongodb-atlas-setup" class="anchor-heading" aria-labelledby="1-mongodb-atlas-setup"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> 1. MongoDB Atlas setup
+  
+  
+</h2>
+    
+<h3 id="create-a-free-cluster">
+  
+  
+    <a href="#create-a-free-cluster" class="anchor-heading" aria-labelledby="create-a-free-cluster"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Create a free cluster
+  
+  
+</h3>
+    
+
+<ol>
+  <li>Sign up or log in at <a href="https://cloud.mongodb.com">cloud.mongodb.com</a>.</li>
+  <li>Create a new <strong>M0 free cluster</strong> (or any tier) in a region close to you.</li>
+  <li>Docs: <a href="https://www.mongodb.com/docs/atlas/tutorial/create-new-cluster/">Create a Cluster</a></li>
+</ol>
+<h3 id="create-a-database-user">
+  
+  
+    <a href="#create-a-database-user" class="anchor-heading" aria-labelledby="create-a-database-user"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Create a database user
+  
+  
+</h3>
+    
+
+<ol>
+  <li>In the Atlas UI: <strong>Security → Database Access → Add New Database User</strong>.</li>
+  <li>Choose <strong>Password</strong> auth. Note the username and password.</li>
+  <li>Grant <strong>Atlas Admin</strong> role (or at minimum <code class="language-plaintext highlighter-rouge">readWriteAnyDatabase</code>).</li>
+  <li>Docs: <a href="https://www.mongodb.com/docs/atlas/security-add-mongodb-users/">Configure Database Users</a></li>
+</ol>
+<h3 id="allow-network-access">
+  
+  
+    <a href="#allow-network-access" class="anchor-heading" aria-labelledby="allow-network-access"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Allow network access
+  
+  
+</h3>
+    
+
+<p>The Kafka Connect container uses your machine’s public IP to reach Atlas. You need to allow:</p>
+
+<ul>
+  <li>Your <strong>local machine IP</strong> (for Python scripts).</li>
+  <li><strong>0.0.0.0/0</strong> temporarily while testing, or your NAT public IP for the Docker network.</li>
+</ul>
+
+<p>Steps: <strong>Security → Network Access → Add IP Address</strong>.</p>
+
+<p>Docs: <a href="https://www.mongodb.com/docs/atlas/security/ip-access-list/">Configure IP Access List</a></p>
+<h3 id="get-the-connection-string">
+  
+  
+    <a href="#get-the-connection-string" class="anchor-heading" aria-labelledby="get-the-connection-string"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Get the connection string
+  
+  
+</h3>
+    
+
+<ol>
+  <li><strong>Database → Connect → Drivers</strong> → copy the <code class="language-plaintext highlighter-rouge">mongodb+srv://</code> URI.</li>
+  <li>Replace <code class="language-plaintext highlighter-rouge">&lt;username&gt;</code> and <code class="language-plaintext highlighter-rouge">&lt;password&gt;</code> with the credentials you created above.</li>
+</ol>
+
+<p>The URI will look like:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>mongodb+srv://myuser:mypass@mycluster.abc12.mongodb.net/?retryWrites=true&amp;w=majority
+</code></pre></div></div><hr />
+<h2 id="2-voyage-ai-api-key">
+  
+  
+    <a href="#2-voyage-ai-api-key" class="anchor-heading" aria-labelledby="2-voyage-ai-api-key"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> 2. Voyage AI API key
+  
+  
+</h2>
+    
+
+<p>Voyage AI is available directly through <strong>MongoDB Atlas Models</strong> — no separate Voyage AI account
+required.</p>
+
+<ol>
+  <li>In the Atlas UI go to <strong>Services → Atlas Models</strong> (or search “Models” in the left nav).</li>
+  <li>Select <strong>Voyage AI</strong> from the provider list and click <strong>Generate API Key</strong>.</li>
+  <li>Copy the key — it will only be shown once.</li>
+  <li>The default model used is <code class="language-plaintext highlighter-rouge">voyage-3.5</code> (1024 dimensions).</li>
+  <li>Docs: <a href="https://www.mongodb.com/docs/atlas/ai-integrations/">Atlas Models — Voyage AI</a></li>
+</ol><hr />
+<h2 id="3-anthropic-api-key">
+  
+  
+    <a href="#3-anthropic-api-key" class="anchor-heading" aria-labelledby="3-anthropic-api-key"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> 3. Anthropic API key
+  
+  
+</h2>
+    
+
+<p>Anthropic Claude is used by the deep agent to synthesize answers from retrieved chunks.</p>
+
+<ol>
+  <li>Sign up at <a href="https://console.anthropic.com/">console.anthropic.com</a>.</li>
+  <li>Go to <strong>API Keys</strong> and create a new key.</li>
+  <li>The default model is <code class="language-plaintext highlighter-rouge">claude-sonnet-4-5</code>. Retrieval still works without this key; only
+answer synthesis requires it.</li>
+  <li>Docs: <a href="https://docs.anthropic.com/en/api/getting-started">Anthropic API docs</a></li>
+</ol><hr />
+<h2 id="4-environment-configuration">
+  
+  
+    <a href="#4-environment-configuration" class="anchor-heading" aria-labelledby="4-environment-configuration"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> 4. Environment configuration
+  
+  
+</h2>
+    
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">cp</span> .env.example .env
+</code></pre></div></div>
+
+<p>Open <code class="language-plaintext highlighter-rouge">.env</code> and fill in the required values:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># REQUIRED — fill these in</span>
+<span class="nv">MONGODB_URI</span><span class="o">=</span>mongodb+srv://&lt;user&gt;:&lt;pass&gt;@&lt;cluster&gt;.mongodb.net/?retryWrites<span class="o">=</span><span class="nb">true</span>&amp;w<span class="o">=</span>majority
+<span class="nv">VOYAGE_API_KEY</span><span class="o">=</span>&lt;your-voyage-api-key&gt;
+<span class="nv">ANTHROPIC_API_KEY</span><span class="o">=</span>&lt;your-anthropic-api-key&gt;
+</code></pre></div></div>
+
+<p>The remaining defaults work as-is for local development (Kafka on <code class="language-plaintext highlighter-rouge">localhost:29092</code>, MinIO on
+<code class="language-plaintext highlighter-rouge">localhost:9000</code>, Temporal on <code class="language-plaintext highlighter-rouge">localhost:7233</code>).</p>
+
+<p>For real AWS S3 instead of local MinIO:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Comment out S3_ENDPOINT_URL and set real values:</span>
+<span class="c"># S3_ENDPOINT_URL=http://localhost:9000   ← remove this line</span>
+<span class="nv">S3_BUCKET</span><span class="o">=</span>your-real-s3-bucket
+<span class="nv">AWS_ACCESS_KEY_ID</span><span class="o">=</span>&lt;real-key&gt;
+<span class="nv">AWS_SECRET_ACCESS_KEY</span><span class="o">=</span>&lt;real-secret&gt;
+<span class="nv">AWS_REGION</span><span class="o">=</span>us-east-1
+</code></pre></div></div><hr />
+<h2 id="5-local-setup-make-setup">
+  
+  
+    <a href="#5-local-setup-make-setup" class="anchor-heading" aria-labelledby="5-local-setup-make-setup"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> 5. Local setup (make setup)
+  
+  
+</h2>
+    
+
+<p>Install Python and UI dependencies in one command:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make setup
+</code></pre></div></div>
+
+<p>This runs:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">uv sync</code> — installs Python 3.12 + all dependencies from <code class="language-plaintext highlighter-rouge">pyproject.toml</code></li>
+  <li><code class="language-plaintext highlighter-rouge">npm install</code> in <code class="language-plaintext highlighter-rouge">agent/ui/</code> — installs the React/Vite frontend</li>
+</ul>
+
+<p>To install separately:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make <span class="nb">install</span>        <span class="c"># Python only</span>
+<span class="nb">cd </span>agent/ui <span class="o">&amp;&amp;</span> npm <span class="nb">install</span>   <span class="c"># UI only</span>
+</code></pre></div></div><hr />
+<h2 id="6-local-docker-infra--kafka--minio">
+  
+  
+    <a href="#6-local-docker-infra--kafka--minio" class="anchor-heading" aria-labelledby="6-local-docker-infra--kafka--minio"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> 6. Local Docker infra — Kafka + MinIO
+  
+  
+</h2>
+    
+
+<p>The local demo replaces production Kafka (Confluent Cloud / MSK) and S3 with:</p>
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>Production</th>
+      <th>Local substitute</th>
+      <th>Purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Confluent Cloud / Apache Kafka</td>
+      <td><strong>cp-kafka</strong> (Docker)</td>
+      <td>Streaming ingestion + Sink Connector</td>
+    </tr>
+    <tr>
+      <td>AWS S3</td>
+      <td><strong>MinIO</strong> (Docker)</td>
+      <td>Object storage for files</td>
+    </tr>
+    <tr>
+      <td>Kafka Connect (managed)</td>
+      <td><strong>cp-kafka-connect</strong> (Docker)</td>
+      <td>MongoDB Sink Connector</td>
+    </tr>
+  </tbody>
+</table></div>
+<h3 id="start-infra">
+  
+  
+    <a href="#start-infra" class="anchor-heading" aria-labelledby="start-infra"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Start infra
+  
+  
+</h3>
+    
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make infra-up
+</code></pre></div></div>
+
+<p>This starts Kafka, Kafka Connect, and MinIO via <code class="language-plaintext highlighter-rouge">infra/docker-compose.yml</code>, waits for them to
+be healthy, creates the MinIO bucket, and registers the MongoDB Sink Connector.</p>
+<h3 id="sink-connector">
+  
+  
+    <a href="#sink-connector" class="anchor-heading" aria-labelledby="sink-connector"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Sink Connector
+  
+  
+</h3>
+    
+
+<p>The connector config is in <code class="language-plaintext highlighter-rouge">infra/connectors/mongo-sink.json</code>. It:</p>
+
+<ul>
+  <li>Reads from the <code class="language-plaintext highlighter-rouge">s3-events</code> Kafka topic.</li>
+  <li>Upserts documents into <code class="language-plaintext highlighter-rouge">temporal.sources</code> in Atlas using the S3 object key as the ID.</li>
+</ul>
+
+<p>Registration happens automatically on <code class="language-plaintext highlighter-rouge">make infra-up</code> via <code class="language-plaintext highlighter-rouge">infra/register_connector.py</code>.</p>
+
+<p>Check connector status:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make connector-status    <span class="c"># should show RUNNING</span>
+</code></pre></div></div>
+<h3 id="minio-local-s3">
+  
+  
+    <a href="#minio-local-s3" class="anchor-heading" aria-labelledby="minio-local-s3"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> MinIO (local S3)
+  
+  
+</h3>
+    
+
+<ul>
+  <li>Console: <a href="http://localhost:9001">http://localhost:9001</a> (user: <code class="language-plaintext highlighter-rouge">minioadmin</code> / pass: <code class="language-plaintext highlighter-rouge">minioadmin</code>)</li>
+  <li>API: <code class="language-plaintext highlighter-rouge">http://localhost:9000</code></li>
+  <li>Bucket: <code class="language-plaintext highlighter-rouge">temporal-datasources</code> (auto-created)</li>
+  <li>MinIO emits native S3 events to Kafka when a file is uploaded — no extra code needed.</li>
+</ul>
+<h3 id="stop--clean">
+  
+  
+    <a href="#stop--clean" class="anchor-heading" aria-labelledby="stop--clean"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Stop / clean
+  
+  
+</h3>
+    
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make infra-down     <span class="c"># stop containers (keep volumes)</span>
+make infra-clean    <span class="c"># stop + delete volumes (wipes Kafka + MinIO data)</span>
+</code></pre></div></div><hr />
+<h2 id="7-run-the-full-stack">
+  
+  
+    <a href="#7-run-the-full-stack" class="anchor-heading" aria-labelledby="7-run-the-full-stack"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> 7. Run the full stack
+  
+  
+</h2>
+    
+
+<p><code class="language-plaintext highlighter-rouge">make start</code> starts all services in the background:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make start
+</code></pre></div></div>
+
+<p>Starts (in order):</p>
+
+<ol>
+  <li>Infra (Kafka + Connect + MinIO) via <code class="language-plaintext highlighter-rouge">make infra-up</code></li>
+  <li>Temporal dev server (<code class="language-plaintext highlighter-rouge">:7233</code>, Web UI <code class="language-plaintext highlighter-rouge">:8233</code>)</li>
+  <li>Temporal worker (<code class="language-plaintext highlighter-rouge">pipeline/worker.py</code>)</li>
+  <li>Trigger listener (<code class="language-plaintext highlighter-rouge">pipeline/trigger_listener.py</code>) — local change-stream shim</li>
+  <li>Agent API (<code class="language-plaintext highlighter-rouge">agent/api.py</code>, <code class="language-plaintext highlighter-rouge">:8090</code>)</li>
+  <li>Agent UI (<code class="language-plaintext highlighter-rouge">agent/ui</code>, <code class="language-plaintext highlighter-rouge">:5173</code>)</li>
+</ol>
+
+<p>Logs go to <code class="language-plaintext highlighter-rouge">.local/*.log</code>. Tail them:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make app-logs
+</code></pre></div></div>
+<h3 id="create-the-atlas-vector-search-index-one-time">
+  
+  
+    <a href="#create-the-atlas-vector-search-index-one-time" class="anchor-heading" aria-labelledby="create-the-atlas-vector-search-index-one-time"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Create the Atlas Vector Search index (one-time)
+  
+  
+</h3>
+    
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make index
+</code></pre></div></div>
+
+<p>This creates the <code class="language-plaintext highlighter-rouge">temporalai_search_index</code> vector search index on <code class="language-plaintext highlighter-rouge">temporal.knowledge</code> in Atlas.
+The workflow also creates it automatically on first ingest, but running <code class="language-plaintext highlighter-rouge">make index</code> upfront avoids
+a delay on the first document.</p>
+
+<p>Docs: <a href="https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-overview/">Atlas Vector Search</a></p>
+<h3 id="seed-a-document">
+  
+  
+    <a href="#seed-a-document" class="anchor-heading" aria-labelledby="seed-a-document"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Seed a document
+  
+  
+</h3>
+    
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make seed                                         <span class="c"># uploads seed/awesome-temporal.md</span>
+make seed <span class="nv">FILE</span><span class="o">=</span>./my-doc.pdf <span class="nv">KEY</span><span class="o">=</span>docs/my-doc.pdf   <span class="c"># upload your own file</span>
+</code></pre></div></div>
+
+<p>Supported formats: <code class="language-plaintext highlighter-rouge">.md</code>, <code class="language-plaintext highlighter-rouge">.pdf</code>, <code class="language-plaintext highlighter-rouge">.csv</code>, <code class="language-plaintext highlighter-rouge">.txt</code>.</p>
+
+<p>Watch the workflow run in the Temporal Web UI at <a href="http://localhost:8233">http://localhost:8233</a>.</p>
+<h3 id="use-the-agent-ui">
+  
+  
+    <a href="#use-the-agent-ui" class="anchor-heading" aria-labelledby="use-the-agent-ui"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Use the agent UI
+  
+  
+</h3>
+    
+
+<p>Open <a href="http://localhost:5173">http://localhost:5173</a> and ask questions about the ingested docs.</p>
+<h3 id="stop-everything">
+  
+  
+    <a href="#stop-everything" class="anchor-heading" aria-labelledby="stop-everything"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Stop everything
+  
+  
+</h3>
+    
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make stop           <span class="c"># stops app + Temporal + infra</span>
+make stop-app       <span class="c"># stops app processes only (leaves infra + Temporal running)</span>
+make restart-app    <span class="c"># restart app processes after .env changes</span>
+</code></pre></div></div><hr />
+<h2 id="8-verify-ingestion">
+  
+  
+    <a href="#8-verify-ingestion" class="anchor-heading" aria-labelledby="8-verify-ingestion"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> 8. Verify ingestion
+  
+  
+</h2>
+    
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>make connector-status                                   <span class="c"># sink should be RUNNING</span>
+make seed <span class="nv">FILE</span><span class="o">=</span>./my-doc.pdf <span class="nv">KEY</span><span class="o">=</span>docs/my-doc.pdf
+<span class="c"># watch Temporal UI: IngestWorkflow → Completed</span>
+make query <span class="nv">Q</span><span class="o">=</span><span class="s2">"something in that file"</span>                   <span class="c"># vector search result</span>
+</code></pre></div></div>
+
+<p>In Atlas, confirm:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">temporal.sources</code> has a document with the S3 key (written by the sink connector).</li>
+  <li><code class="language-plaintext highlighter-rouge">temporal.knowledge</code> has embedded chunk documents.</li>
+</ul><hr />
+<h2 id="9-backfill--model-cutover">
+  
+  
+    <a href="#9-backfill--model-cutover" class="anchor-heading" aria-labelledby="9-backfill--model-cutover"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> 9. Backfill + model cutover
+  
+  
+</h2>
+    
+
+<p>Use this when upgrading the embedding model (e.g. <code class="language-plaintext highlighter-rouge">voyage-3.5</code> → a newer model with different
+dimensions):</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Re-embed the active collection into knowledge_v2</span>
+make backfill <span class="nv">MODEL</span><span class="o">=</span>voyage-3-large
+
+<span class="c"># Wait for BackfillWorkflow to complete in the Temporal UI</span>
+<span class="c"># Wait for the knowledge_v2 Atlas Vector Search index to reach READY state</span>
+
+<span class="c"># Flip the active pointer to knowledge_v2</span>
+make cutover <span class="nv">TO</span><span class="o">=</span>knowledge_v2
+
+<span class="c"># Verify queries now hit knowledge_v2</span>
+make query <span class="nv">Q</span><span class="o">=</span><span class="s2">"test question"</span>
+</code></pre></div></div>
+
+<p>The agent reads the <code class="language-plaintext highlighter-rouge">temporal_config</code> collection to know which collection is active. No restart
+needed.</p><hr />
+<h2 id="10-atlas-stream-processing-production-trigger">
+  
+  
+    <a href="#10-atlas-stream-processing-production-trigger" class="anchor-heading" aria-labelledby="10-atlas-stream-processing-production-trigger"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> 10. Atlas Stream Processing (production trigger)
+  
+  
+</h2>
+    
+
+<p>In production, <code class="language-plaintext highlighter-rouge">trigger_listener.py</code> is replaced by <strong>Atlas Stream Processing (ASP)</strong> — a
+MongoDB-managed service that watches change streams and calls an HTTPS endpoint.</p>
+
+<blockquote>
+  <p>For local dev, <code class="language-plaintext highlighter-rouge">trigger_listener.py</code> provides identical behaviour without needing an ASP instance.</p>
+</blockquote>
+<h3 id="one-time-asp-setup">
+  
+  
+    <a href="#one-time-asp-setup" class="anchor-heading" aria-labelledby="one-time-asp-setup"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> One-time ASP setup
+  
+  
+</h3>
+    
+
+<p><strong>Prerequisites:</strong></p>
+
+<ul>
+  <li>An Atlas <strong>Stream Processing Instance (SPI)</strong> — <a href="https://www.mongodb.com/docs/atlas/atlas-stream-processing/tutorial/">create one</a></li>
+  <li>A connection to your Atlas cluster registered in the SPI’s connection registry as <code class="language-plaintext highlighter-rouge">atlasCluster</code></li>
+  <li>The trigger service deployed at a public HTTPS URL (e.g. <code class="language-plaintext highlighter-rouge">https://&lt;host&gt;/ingest-trigger</code>)</li>
+  <li>An HTTPS connection registered in the SPI as <code class="language-plaintext highlighter-rouge">temporalTrigger</code> pointing to the trigger service</li>
+</ul>
+
+<p><strong>Connect to the SPI with <code class="language-plaintext highlighter-rouge">mongosh</code> and create the processor:</strong></p>
+
+<div class="language-javascript highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nx">sp</span><span class="p">.</span><span class="nf">createStreamProcessor</span><span class="p">(</span><span class="dl">"</span><span class="s2">src_to_temporal</span><span class="dl">"</span><span class="p">,</span> <span class="p">[</span>
+  <span class="p">{</span>
+    <span class="na">$source</span><span class="p">:</span> <span class="p">{</span>
+      <span class="na">connectionName</span><span class="p">:</span> <span class="dl">"</span><span class="s2">atlasCluster</span><span class="dl">"</span><span class="p">,</span>
+      <span class="na">db</span><span class="p">:</span> <span class="dl">"</span><span class="s2">temporal</span><span class="dl">"</span><span class="p">,</span>
+      <span class="na">coll</span><span class="p">:</span> <span class="dl">"</span><span class="s2">sources</span><span class="dl">"</span><span class="p">,</span>
+      <span class="na">config</span><span class="p">:</span> <span class="p">{</span> <span class="na">fullDocument</span><span class="p">:</span> <span class="dl">"</span><span class="s2">updateLookup</span><span class="dl">"</span> <span class="p">},</span>
+    <span class="p">},</span>
+  <span class="p">},</span>
+  <span class="p">{</span> <span class="na">$match</span><span class="p">:</span> <span class="p">{</span> <span class="na">operationType</span><span class="p">:</span> <span class="p">{</span> <span class="na">$in</span><span class="p">:</span> <span class="p">[</span><span class="dl">"</span><span class="s2">insert</span><span class="dl">"</span><span class="p">,</span> <span class="dl">"</span><span class="s2">replace</span><span class="dl">"</span><span class="p">,</span> <span class="dl">"</span><span class="s2">update</span><span class="dl">"</span><span class="p">]</span> <span class="p">}</span> <span class="p">}</span> <span class="p">},</span>
+  <span class="p">{</span>
+    <span class="na">$project</span><span class="p">:</span> <span class="p">{</span>
+      <span class="na">bucket</span><span class="p">:</span> <span class="p">{</span> <span class="na">$arrayElemAt</span><span class="p">:</span> <span class="p">[</span><span class="dl">"</span><span class="s2">$fullDocument.Records.s3.bucket.name</span><span class="dl">"</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="p">},</span>
+      <span class="na">key</span><span class="p">:</span> <span class="p">{</span> <span class="na">$arrayElemAt</span><span class="p">:</span> <span class="p">[</span><span class="dl">"</span><span class="s2">$fullDocument.Records.s3.object.key</span><span class="dl">"</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="p">},</span>
+    <span class="p">},</span>
+  <span class="p">},</span>
+  <span class="p">{</span>
+    <span class="na">$https</span><span class="p">:</span> <span class="p">{</span>
+      <span class="na">connectionName</span><span class="p">:</span> <span class="dl">"</span><span class="s2">temporalTrigger</span><span class="dl">"</span><span class="p">,</span>
+      <span class="na">path</span><span class="p">:</span> <span class="dl">"</span><span class="s2">/ingest-trigger</span><span class="dl">"</span><span class="p">,</span>
+      <span class="na">method</span><span class="p">:</span> <span class="dl">"</span><span class="s2">POST</span><span class="dl">"</span><span class="p">,</span>
+      <span class="na">as</span><span class="p">:</span> <span class="dl">"</span><span class="s2">response</span><span class="dl">"</span><span class="p">,</span>
+      <span class="na">payload</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span> <span class="na">$replaceRoot</span><span class="p">:</span> <span class="p">{</span> <span class="na">newRoot</span><span class="p">:</span> <span class="p">{</span> <span class="na">bucket</span><span class="p">:</span> <span class="dl">"</span><span class="s2">$bucket</span><span class="dl">"</span><span class="p">,</span> <span class="na">key</span><span class="p">:</span> <span class="dl">"</span><span class="s2">$key</span><span class="dl">"</span> <span class="p">}</span> <span class="p">}</span> <span class="p">},</span>
+      <span class="p">],</span>
+    <span class="p">},</span>
+  <span class="p">},</span>
+<span class="p">]);</span>
+
+<span class="nx">sp</span><span class="p">.</span><span class="nx">src_to_temporal</span><span class="p">.</span><span class="nf">start</span><span class="p">();</span>
+<span class="nx">sp</span><span class="p">.</span><span class="nx">src_to_temporal</span><span class="p">.</span><span class="nf">stats</span><span class="p">();</span>
+</code></pre></div></div>
+
+<p>See <code class="language-plaintext highlighter-rouge">infra/asp/README.md</code> for full details and troubleshooting.</p>
+
+<p>Docs: <a href="https://www.mongodb.com/docs/atlas/atlas-stream-processing/">Atlas Stream Processing</a></p><hr />
+<h2 id="cloud-infra-references">
+  
+  
+    <a href="#cloud-infra-references" class="anchor-heading" aria-labelledby="cloud-infra-references"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Cloud infra references
+  
+  
+</h2>
+    
+
+<p>When moving from local dev to real cloud infrastructure, use these references:</p>
+<h3 id="mongodb-atlas">
+  
+  
+    <a href="#mongodb-atlas" class="anchor-heading" aria-labelledby="mongodb-atlas"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> MongoDB Atlas
+  
+  
+</h3>
+    
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>Topic</th>
+      <th>Documentation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Create a cluster</td>
+      <td><a href="https://www.mongodb.com/docs/atlas/tutorial/create-new-cluster/">mongodb.com/docs/atlas/tutorial/create-new-cluster</a></td>
+    </tr>
+    <tr>
+      <td>Database users</td>
+      <td><a href="https://www.mongodb.com/docs/atlas/security-add-mongodb-users/">mongodb.com/docs/atlas/security-add-mongodb-users</a></td>
+    </tr>
+    <tr>
+      <td>Network access</td>
+      <td><a href="https://www.mongodb.com/docs/atlas/security/ip-access-list/">mongodb.com/docs/atlas/security/ip-access-list</a></td>
+    </tr>
+    <tr>
+      <td>Atlas Vector Search</td>
+      <td><a href="https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-overview/">mongodb.com/docs/atlas/atlas-vector-search</a></td>
+    </tr>
+    <tr>
+      <td>Atlas Stream Processing</td>
+      <td><a href="https://www.mongodb.com/docs/atlas/atlas-stream-processing/">mongodb.com/docs/atlas/atlas-stream-processing</a></td>
+    </tr>
+  </tbody>
+</table></div>
+<h3 id="kafka-production">
+  
+  
+    <a href="#kafka-production" class="anchor-heading" aria-labelledby="kafka-production"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Kafka (production)
+  
+  
+</h3>
+    
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>Option</th>
+      <th>Documentation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Confluent Cloud</td>
+      <td><a href="https://docs.confluent.io/cloud/current/overview.html">docs.confluent.io/cloud</a></td>
+    </tr>
+    <tr>
+      <td>Amazon MSK</td>
+      <td><a href="https://docs.aws.amazon.com/msk/latest/developerguide/what-is-msk.html">docs.aws.amazon.com/msk</a></td>
+    </tr>
+    <tr>
+      <td>MongoDB Kafka Connector</td>
+      <td><a href="https://www.mongodb.com/docs/kafka-connector/current/">mongodb.com/docs/kafka-connector</a></td>
+    </tr>
+  </tbody>
+</table></div>
+
+<p>Update <code class="language-plaintext highlighter-rouge">KAFKA_BOOTSTRAP</code> and <code class="language-plaintext highlighter-rouge">KAFKA_CONNECT_URL</code> in <code class="language-plaintext highlighter-rouge">.env</code> to point to the managed cluster.</p>
+<h3 id="aws-s3-production">
+  
+  
+    <a href="#aws-s3-production" class="anchor-heading" aria-labelledby="aws-s3-production"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> AWS S3 (production)
+  
+  
+</h3>
+    
+
+<p>Replace MinIO with real S3:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># In .env — comment out S3_ENDPOINT_URL, set real values</span>
+<span class="nv">S3_BUCKET</span><span class="o">=</span>your-production-bucket
+<span class="nv">AWS_REGION</span><span class="o">=</span>us-east-1
+<span class="nv">AWS_ACCESS_KEY_ID</span><span class="o">=</span>&lt;real-key&gt;
+<span class="nv">AWS_SECRET_ACCESS_KEY</span><span class="o">=</span>&lt;real-secret&gt;
+</code></pre></div></div>
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>Topic</th>
+      <th>Documentation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>S3 Getting Started</td>
+      <td><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/GetStartedWithS3.html">docs.aws.amazon.com/s3/getting-started</a></td>
+    </tr>
+    <tr>
+      <td>S3 Event Notifications to SQS/SNS/Kafka</td>
+      <td><a href="https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html">docs.aws.amazon.com/s3/event-notifications</a></td>
+    </tr>
+    <tr>
+      <td>MSK Connect (Kafka Connect managed)</td>
+      <td><a href="https://docs.aws.amazon.com/msk/latest/developerguide/msk-connect.html">docs.aws.amazon.com/msk/connect</a></td>
+    </tr>
+  </tbody>
+</table></div>
+<h3 id="temporal-production">
+  
+  
+    <a href="#temporal-production" class="anchor-heading" aria-labelledby="temporal-production"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Temporal (production)
+  
+  
+</h3>
+    
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>Option</th>
+      <th>Documentation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Temporal Cloud</td>
+      <td><a href="https://temporal.io/cloud">temporal.io/cloud</a></td>
+    </tr>
+    <tr>
+      <td>Self-hosted with Helm</td>
+      <td><a href="https://docs.temporal.io/self-hosted-guide">docs.temporal.io/self-hosted-guide</a></td>
+    </tr>
+  </tbody>
+</table></div>
+
+<p>Update <code class="language-plaintext highlighter-rouge">TEMPORAL_ADDRESS</code> in <code class="language-plaintext highlighter-rouge">.env</code> to the Temporal Cloud endpoint. Add mTLS cert paths for
+Temporal Cloud connections.</p>
+<h3 id="voyage-ai-via-mongodb-atlas-models">
+  
+  
+    <a href="#voyage-ai-via-mongodb-atlas-models" class="anchor-heading" aria-labelledby="voyage-ai-via-mongodb-atlas-models"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Voyage AI (via MongoDB Atlas Models)
+  
+  
+</h3>
+    
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>Topic</th>
+      <th>Documentation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Atlas Models overview</td>
+      <td><a href="https://www.mongodb.com/docs/atlas/ai-integrations/">mongodb.com/docs/atlas/ai-integrations</a></td>
+    </tr>
+    <tr>
+      <td>Voyage AI embeddings on Atlas</td>
+      <td><a href="https://www.mongodb.com/docs/atlas/atlas-vector-search/ai-integrations/voyage-ai/">mongodb.com/docs/atlas/atlas-vector-search/ai-integrations/voyage-ai</a></td>
+    </tr>
+    <tr>
+      <td>Available embedding models</td>
+      <td><a href="https://www.mongodb.com/docs/atlas/ai-integrations/">mongodb.com/docs/atlas/ai-integrations/voyage-ai/models</a></td>
+    </tr>
+  </tbody>
+</table></div>
+<h3 id="anthropic">
+  
+  
+    <a href="#anthropic" class="anchor-heading" aria-labelledby="anthropic"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Anthropic
+  
+  
+</h3>
+    
+
+<div class="table-wrapper"><table>
+  <thead>
+    <tr>
+      <th>Topic</th>
+      <th>Documentation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Messages API</td>
+      <td><a href="https://docs.anthropic.com/en/api/messages">docs.anthropic.com/en/api/messages</a></td>
+    </tr>
+    <tr>
+      <td>Models</td>
+      <td><a href="https://docs.anthropic.com/en/docs/about-claude/models/overview">docs.anthropic.com/en/docs/about-claude/models</a></td>
+    </tr>
+  </tbody>
+</table></div><hr />
+<h2 id="maintaining-this-documentation-site">
+  
+  
+    <a href="#maintaining-this-documentation-site" class="anchor-heading" aria-labelledby="maintaining-this-documentation-site"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Maintaining this documentation site
+  
+  
+</h2>
+    
+
+<p>This site (everything under <code class="language-plaintext highlighter-rouge">docs/</code>) is a <a href="https://jekyllrb.com/">Jekyll</a> site using the
+<a href="https://just-the-docs.com/">Just the Docs</a> theme. The <code class="language-plaintext highlighter-rouge">docs/</code> folder is the <strong>editable
+source</strong>; the rendered site is published from the <strong><code class="language-plaintext highlighter-rouge">gh-pages</code></strong> branch.</p>
+
+<blockquote class="note">
+  <p><strong>Why a prebuilt branch?</strong> This organization disables GitHub Actions, and GitHub Pages runs
+its Jekyll build as an Action. So GitHub cannot build the site — instead we render it to
+static HTML locally and commit that output to <code class="language-plaintext highlighter-rouge">gh-pages</code> (which carries a <code class="language-plaintext highlighter-rouge">.nojekyll</code> marker
+so GitHub serves the files as-is, with no build step).</p>
+</blockquote>
+<h3 id="edit--publish">
+  
+  
+    <a href="#edit--publish" class="anchor-heading" aria-labelledby="edit--publish"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Edit → publish
+  
+  
+</h3>
+    
+
+<ol>
+  <li>Edit or add Markdown pages under <code class="language-plaintext highlighter-rouge">docs/</code> (each page needs <code class="language-plaintext highlighter-rouge">title</code> and <code class="language-plaintext highlighter-rouge">nav_order</code> front
+matter to appear in the sidebar).</li>
+  <li>
+    <p>Rebuild and publish — no local Ruby needed, the build runs in Docker:</p>
+
+    <div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>scripts/build-docs.sh <span class="nt">--publish</span>
+</code></pre></div>    </div>
+
+    <p>This renders the site, commits it to <code class="language-plaintext highlighter-rouge">gh-pages</code>, and pushes. To preview locally without
+publishing, run <code class="language-plaintext highlighter-rouge">scripts/build-docs.sh</code> (output lands in <code class="language-plaintext highlighter-rouge">docs/_site/</code>, git-ignored).</p>
+  </li>
+  <li>GitHub Pages serves the update at
+<a href="https://mongodb-partners.github.io/mdb-temporal-pra/">mongodb-partners.github.io/mdb-temporal-pra</a>
+within a minute.</li>
+</ol>
+<h3 id="one-time-github-pages-setup">
+  
+  
+    <a href="#one-time-github-pages-setup" class="anchor-heading" aria-labelledby="one-time-github-pages-setup"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> One-time GitHub Pages setup
+  
+  
+</h3>
+    
+
+<p><strong>Settings → Pages → Source: “Deploy from a branch” → Branch <code class="language-plaintext highlighter-rouge">gh-pages</code> / <code class="language-plaintext highlighter-rouge">(root)</code> → Save.</strong></p>
+
+<blockquote class="note">
+  <p>If GitHub Actions is ever enabled for this repo, the site can build natively from the <code class="language-plaintext highlighter-rouge">docs/</code>
+folder instead — the <code class="language-plaintext highlighter-rouge">_config.yml</code> already declares the <code class="language-plaintext highlighter-rouge">remote_theme</code> for that path, and the
+<code class="language-plaintext highlighter-rouge">gh-pages</code> branch can be retired.</p>
+</blockquote>
+
+          
+
+          
+            
+          
+        </main>
+        
+
+  <hr>
+  <footer>
+    
+      <p><a href="#top" id="back-to-top">Back to top</a></p>
+    
+
+    <p class="text-small text-grey-dk-100 mb-0">MongoDB × Temporal Partner Reference Architecture · <a href="https://github.com/mongodb-partners/mdb-temporal-pra">source on GitHub</a></p>
+
+    
+  </footer>
+
+
+      </div>
+    </div>
+    
+      
+
+<div class="search-overlay"></div>
+
+    
+  </div>
+
+  
+</body>
+</html>
+
