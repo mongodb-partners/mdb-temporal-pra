@@ -45,10 +45,22 @@ This PRA packages the pattern that removes that pain — already in production a
 
 ### High-level design
 
-![High-level architecture — Sources → Kafka → Temporal → Atlas → Deep Agent → User](docs/images/mongodb-temporal-hld.png)
+```mermaid
+flowchart LR
+    upload([New file]) --> store[("Object storage<br/>AWS S3 / MinIO")]
+    store -->|"ObjectCreated event"| trig["Lambda (S3) or webhook (MinIO)<br/>handle_s3_event"]
+    trig -->|"start_workflow"| temporal["Temporal<br/>IngestWorkflow"]
+    temporal -->|"fetch, chunk, embed, index"| atlas[("MongoDB Atlas<br/>knowledge + vector index")]
+    voyage[["Voyage AI<br/>embeddings"]] -.->|"embed"| temporal
 
-**How to read it** (the diagram pictures the opt-in connector path; the default is the direct
-trigger described below):
+    user([User]) --> agent["Deep Agent<br/>FastAPI + React"]
+    agent -->|"vector search"| atlas
+    voyage -.->|"rerank"| agent
+    claude[["Anthropic Claude"]] -.->|"synthesis"| agent
+    agent -->|"answer"| user
+```
+
+**How to read it:**
 
 1. **A new object lands in object storage** (AWS S3, or MinIO locally).
 2. **The object-created event starts the Temporal `IngestWorkflow` directly** — via an AWS
@@ -59,11 +71,11 @@ trigger described below):
 4. A **Deep Agent** (FastAPI + React) runs vector search over the fresh knowledge and streams
    answers to the user.
 
-> **Opt-in connector showcase** (`make kafka-up`, pictured in the diagram above): instead of
-> triggering Temporal directly, S3/MinIO events flow through **Kafka** → a **MongoDB Sink
-> Connector** → the `sources` collection → **Atlas Stream Processing** (change stream) → the
-> Temporal workflow. This demonstrates the MongoDB integration stack; the direct path above is
-> the default. Rationale in
+> **Opt-in connector showcase** (`make kafka-up`): instead of triggering Temporal directly,
+> S3/MinIO events can flow through **Kafka** → a **MongoDB Sink Connector** → the `sources`
+> collection → **Atlas Stream Processing** (change stream) → the Temporal workflow. This
+> demonstrates the MongoDB integration stack; the direct path shown above is the default.
+> Rationale in
 > [`docs/decisions/0001-trigger-ingestion-directly-from-s3.md`](docs/decisions/0001-trigger-ingestion-directly-from-s3.md).
 
 > **Serverless option:** Atlas Stream Processing's `$https` invocation pairs naturally with
@@ -84,7 +96,32 @@ trigger described below):
 
 ## System architecture
 
-![alt text](docs/images/mongodb-temporal-architecture.png)
+```mermaid
+flowchart TB
+    minio[("MinIO<br/>local")]
+    s3[("AWS S3<br/>prod")]
+
+    subgraph dtrig ["Object-created trigger"]
+      api["trigger_api<br/>POST /ingest-event"]
+      lam["lambda_handler"]
+      core{{"handle_s3_event<br/>shared"}}
+      api --> core
+      lam --> core
+    end
+
+    minio -->|"webhook"| api
+    s3 -->|"S3 event"| lam
+
+    core -->|"start_workflow"| wf
+
+    subgraph wf ["Temporal - IngestWorkflow"]
+      direction LR
+      f["fetch_and_stage_chunks"] --> e["embed_staged_chunk<br/>one per chunk"] --> i["index_document"]
+    end
+
+    e -.->|"embed"| voyage[["Voyage AI"]]
+    i --> knowledge[("temporal.knowledge<br/>+ vector index")]
+```
 
 ### Atlas data model
 
