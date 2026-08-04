@@ -78,6 +78,10 @@ This PRA packages the pattern that removes that pain — already in production a
 
 ![alt text](docs/images/mongodb-temporal-architecture.png)
 
+### Sequence diagram
+
+![Sequence diagram](docs/images/sequence-diagram.svg)
+
 ### Atlas data model
 
 ```text
