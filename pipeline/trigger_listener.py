@@ -14,8 +14,7 @@ import asyncio
 
 from .clients import mongo_client
 from .config import settings
-from .s3util import refs_from_s3_event
-from .trigger import get_client, start_ingest
+from .trigger import get_client, handle_s3_event
 
 
 async def main() -> None:
@@ -32,9 +31,8 @@ async def main() -> None:
             # stream.next() blocks until the next change; run it off the event loop.
             change = await asyncio.to_thread(stream.next)
             doc = change.get("fullDocument") or {}
-            for ref in refs_from_s3_event(doc):
-                wf_id = await start_ingest(temporal, ref)
-                print(f"[trigger-listener] {ref.s3_uri} -> started {wf_id}")
+            for wf_id in await handle_s3_event(temporal, doc):
+                print(f"[trigger-listener] started {wf_id}")
 
 
 if __name__ == "__main__":

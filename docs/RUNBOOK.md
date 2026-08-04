@@ -162,46 +162,61 @@ cd agent/ui && npm install   # UI only
 
 ---
 
-## 6. Local Docker infra — Kafka + MinIO
+## 6. Local Docker infra — MinIO (default) + opt-in Kafka
 
-The local demo replaces production Kafka (Confluent Cloud / MSK) and S3 with:
+By default the local stack triggers ingestion **directly**: MinIO's native **webhook**
+notification POSTs each new object to the trigger API, which starts the `IngestWorkflow`
+(see ADR `docs/decisions/0001-trigger-ingestion-directly-from-s3.md`). Kafka + the MongoDB
+Sink Connector are **opt-in**, for demonstrating that integration.
 
-| Production                     | Local substitute              | Purpose                              |
-| ------------------------------ | ----------------------------- | ------------------------------------ |
-| Confluent Cloud / Apache Kafka | **cp-kafka** (Docker)         | Streaming ingestion + Sink Connector |
-| AWS S3                         | **MinIO** (Docker)            | Object storage for files             |
-| Kafka Connect (managed)        | **cp-kafka-connect** (Docker) | MongoDB Sink Connector               |
+| Production                      | Local substitute                                   | Purpose                                       |
+| ------------------------------- | -------------------------------------------------- | --------------------------------------------- |
+| AWS S3                          | **MinIO** (Docker)                                 | Object storage + native event notifications   |
+| AWS Lambda (S3 event target)    | **trigger API** (host process)                     | Receives the event and starts the workflow    |
+| Confluent Cloud / Kafka Connect | **cp-kafka / cp-kafka-connect** (Docker, *opt-in*) | MongoDB Sink Connector showcase               |
 
-### Start infra
+### Start infra (default)
 
 ```bash
 make infra-up
 ```
 
-This starts Kafka, Kafka Connect, and MinIO via `infra/docker-compose.yml`, waits for them to
-be healthy, creates the MinIO bucket, and registers the MongoDB Sink Connector.
+Starts **MinIO** only, creates the `temporal-datasources` bucket, and subscribes its
+ObjectCreated events to the MinIO **webhook** target. The webhook endpoint is
+`http://host.docker.internal:8088/ingest-event` — the `trigger_api` host process started by
+`make start`. MinIO uses a `queue_dir`, so events that land before the trigger API is up are
+buffered and replayed (at-least-once).
 
-### Sink Connector
+### Default trigger: MinIO webhook → trigger API
 
-The connector config is in `infra/connectors/mongo-sink.json`. It:
+MinIO POSTs the raw S3 event JSON to `POST /ingest-event`, which parses it with the shared
+`refs_from_s3_event` and starts one `IngestWorkflow` per object — the **same code path** an
+AWS Lambda runs against real S3 (`pipeline/lambda_handler.py`). No Kafka, Sink Connector,
+`sources` collection, or Stream Processing is involved.
 
-- Reads from the `s3-events` Kafka topic.
-- Upserts documents into `temporal.sources` in Atlas using the S3 object key as the ID.
+### Opt-in: Kafka + MongoDB Sink Connector
 
-Registration happens automatically on `make infra-up` via `infra/register_connector.py`.
+```bash
+make kafka-up        # start Kafka + Connect, wire the Kafka bucket event, register the sink
+make trigger-listen  # watch the sources change stream (in place of the webhook)
+```
 
-Check connector status:
+The connector config is in `infra/connectors/mongo-sink.json`: it reads the `s3-events` Kafka
+topic and upserts documents into `temporal.sources` in Atlas keyed by the S3 object key.
+Registration happens via `infra/register_connector.py`. Check status:
 
 ```bash
 make connector-status    # should show RUNNING
 ```
+
+Both the webhook and Kafka bucket subscriptions can be active at once — the `IngestWorkflow`'s
+deterministic id makes a duplicate trigger a harmless no-op.
 
 ### MinIO (local S3)
 
 - Console: [http://localhost:9001](http://localhost:9001) (user: `minioadmin` / pass: `minioadmin`)
 - API: `http://localhost:9000`
 - Bucket: `temporal-datasources` (auto-created)
-- MinIO emits native S3 events to Kafka when a file is uploaded — no extra code needed.
 
 ### Stop / clean
 
@@ -222,10 +237,10 @@ make start
 
 Starts (in order):
 
-1. Infra (Kafka + Connect + MinIO) via `make infra-up`
+1. Infra (MinIO) via `make infra-up`
 2. Temporal dev server (`:7233`, Web UI `:8233`)
 3. Temporal worker (`pipeline/worker.py`)
-4. Trigger listener (`pipeline/trigger_listener.py`) — local change-stream shim
+4. Trigger API (`pipeline/trigger_api.py`, `:8088`) — receives MinIO webhook POSTs at `/ingest-event`
 5. Agent API (`agent/api.py`, `:8090`)
 6. Agent UI (`agent/ui`, `:5173`)
 
@@ -313,6 +328,12 @@ needed.
 ---
 
 ## 10. Atlas Stream Processing (production trigger)
+
+> **Direct-trigger alternative (recommended for S3-only ingestion).** Per ADR
+> `docs/decisions/0001-trigger-ingestion-directly-from-s3.md`, the production trigger can be an
+> **AWS Lambda** on the S3 ObjectCreated event that calls `pipeline.lambda_handler` — the same
+> handler the local MinIO webhook uses — with no Kafka, `sources`, or ASP. The ASP setup below
+> is the trigger for the opt-in Kafka/`sources` (`make kafka-up`) design.
 
 In production, `trigger_listener.py` is replaced by **Atlas Stream Processing (ASP)** — a
 MongoDB-managed service that watches change streams and calls an HTTPS endpoint.

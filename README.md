@@ -47,16 +47,24 @@ This PRA packages the pattern that removes that pain — already in production a
 
 ![High-level architecture — Sources → Kafka → Temporal → Atlas → Deep Agent → User](docs/images/mongodb-temporal-hld.png)
 
-**How to read it:**
+**How to read it** (the diagram pictures the opt-in connector path; the default is the direct
+trigger described below):
 
-1. **Data sources** (IoT, S3, RDBMS) feed into **Kafka** via native connectors.
-2. A **Kafka Sink Connector** lands raw records into MongoDB Atlas (`sources` collection).
-3. **Atlas Stream Processing** watches the change stream on `sources` and triggers the Temporal
-   ingest workflow.
-4. **Temporal** chunks the content, calls **Voyage AI** for embeddings, and upserts into
+1. **A new object lands in object storage** (AWS S3, or MinIO locally).
+2. **The object-created event starts the Temporal `IngestWorkflow` directly** — via an AWS
+   Lambda for real S3, or a MinIO webhook locally. Both call the same handler
+   (`pipeline/lambda_handler.py` / `POST /ingest-event`).
+3. **Temporal** chunks the content, calls **Voyage AI** for embeddings, and upserts into
    **Atlas Search**.
-5. A **Deep Agent** (FastAPI + React) runs vector search over the fresh knowledge and streams
+4. A **Deep Agent** (FastAPI + React) runs vector search over the fresh knowledge and streams
    answers to the user.
+
+> **Opt-in connector showcase** (`make kafka-up`, pictured in the diagram above): instead of
+> triggering Temporal directly, S3/MinIO events flow through **Kafka** → a **MongoDB Sink
+> Connector** → the `sources` collection → **Atlas Stream Processing** (change stream) → the
+> Temporal workflow. This demonstrates the MongoDB integration stack; the direct path above is
+> the default. Rationale in
+> [`docs/decisions/0001-trigger-ingestion-directly-from-s3.md`](docs/decisions/0001-trigger-ingestion-directly-from-s3.md).
 
 > **Serverless option:** Atlas Stream Processing's `$https` invocation pairs naturally with
 > [Temporal Serverless Workers on AWS Lambda](https://temporal.io/blog/introducing-temporal-serverless-workers-deploy-temporal-workers-to-aws-lambda)
@@ -82,7 +90,7 @@ This PRA packages the pattern that removes that pain — already in production a
 
 ```text
 Database: temporal
-├── sources              ← raw S3 event records (written by Kafka Sink Connector)
+├── sources              ← raw S3 event records (opt-in Kafka Sink Connector path)
 ├── chunks_staging       ← intermediate chunks during IngestWorkflow
 ├── knowledge            ← embedded docs + Atlas Vector Search index (active)
 ├── knowledge_v2         ← BackfillWorkflow writes here on model upgrade (blue/green)
@@ -108,7 +116,7 @@ cp .env.example .env
 # 3. Install all dependencies (Python + UI)
 make setup
 
-# 4. Start everything (Kafka, Connect, MinIO, Temporal, worker, agent API + UI)
+# 4. Start everything (MinIO, Temporal, worker, trigger API, agent API + UI)
 make start
 
 # 5. Create the Atlas Vector Search index (one-time)
@@ -132,7 +140,8 @@ make stop
 | Temporal Web UI   | http://localhost:8233 |                                                |
 | Agent API         | http://localhost:8090 |                                                |
 | MinIO console     | http://localhost:9001 | username: `minioadmin`, password: `minioadmin` |
-| Kafka Connect API | http://localhost:8083 |                                                |
+| Trigger API       | http://localhost:8088 | webhook `/ingest-event` (default local trigger) |
+| Kafka Connect API | http://localhost:8083 | opt-in only (`make kafka-up`)                  |
 
 ---
 
@@ -144,14 +153,17 @@ mongodb-temporal-sa-pra/
 ├── Makefile                        ← all dev commands (make help)
 ├── pyproject.toml                  ← Python deps managed by uv
 ├── .env.example                    ← copy → .env, fill credentials
+├── tests/                          ← pytest (uv run pytest) — handler + parser tests
 ├── agent/
 │   ├── api.py                      ← FastAPI deep-agent backend (:8090)
 │   ├── retrieval.py                ← vector search + rerank + Claude answer
 │   └── ui/                         ← React/Vite chat UI (:5173)
 ├── pipeline/
 │   ├── worker.py                   ← Temporal worker process
-│   ├── trigger_listener.py         ← local change-stream trigger shim (dev)
-│   ├── trigger_api.py              ← ASP $https trigger endpoint (production)
+│   ├── trigger.py                  ← shared handle_s3_event → start IngestWorkflow
+│   ├── trigger_api.py              ← webhook /ingest-event (default) + ASP /ingest-trigger
+│   ├── lambda_handler.py           ← AWS Lambda entrypoint for real S3 (same handler)
+│   ├── trigger_listener.py         ← sources change-stream shim (opt-in Kafka path)
 │   ├── workflows/
 │   │   ├── ingest_workflow.py      ← IngestWorkflow: fetch → chunk → embed → index
 │   │   └── backfill_workflow.py    ← BackfillWorkflow: re-embed → knowledge_v2
@@ -162,8 +174,8 @@ mongodb-temporal-sa-pra/
 │   ├── config_store.py             ← active collection/index pointer
 │   └── search_index.py             ← idempotent Atlas Vector Search management
 └── infra/
-    ├── docker-compose.yml          ← Kafka + Connect + MinIO (local dev)
-    ├── connectors/mongo-sink.json  ← Kafka Connect → temporal.sources
+    ├── docker-compose.yml          ← MinIO (default) + opt-in Kafka/Connect (profile)
+    ├── connectors/mongo-sink.json  ← Kafka Connect → temporal.sources (opt-in)
     ├── atlas_indexes.json          ← Vector Search index definitions
     └── asp/README.md               ← Atlas Stream Processing setup (production)
 ```
@@ -176,3 +188,4 @@ mongodb-temporal-sa-pra/
 | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | **[docs/RUNBOOK.md](docs/RUNBOOK.md)** | Prerequisites, API key setup, local spin-up, cloud infra references                               |
 | **[docs/LLD.md](docs/LLD.md)**         | Low-level design — data contracts, workflow internals, scaling to multiple sources and data types |
+| **[docs/decisions/](docs/decisions/)** | Architecture Decision Records — e.g. ADR 0001 (direct-from-S3 triggering)                          |
