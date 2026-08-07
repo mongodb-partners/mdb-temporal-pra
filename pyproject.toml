@@ -5,7 +5,7 @@ description = "MongoDB x Temporal Partner Reference Architecture — Part 1: fre
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "temporalio>=1.9,<2",
+    "temporalio[opentelemetry]>=1.9,<2",
     "pymongo[srv]>=4.9,<5",
     "voyageai>=0.3,<1",
     "boto3>=1.35,<2",
@@ -15,6 +15,7 @@ dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.30,<1",
     "anthropic>=0.40,<1",
+    "openai-agents>=0.1",
 ]
 
 [dependency-groups]

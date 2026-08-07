@@ -82,3 +82,12 @@ header h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.02em; }
   white-space: nowrap;
 }
 .answer-body { white-space: pre-wrap; }
+
+.meta a { color: var(--accent); text-decoration: none; }
+.meta a:hover { text-decoration: underline; }
+
+.trajectory { margin-top: 18px; }
+.trajectory h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.tool-calls { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
+.tool-calls li { margin: 2px 0; }
+.tool-calls code { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; color: var(--accent); }

@@ -70,11 +70,16 @@ class Settings(BaseSettings):
     voyage_rerank_model: str = "rerank-2.5"
     embed_dim: int = 1024
 
-    # ---- Anthropic (deep agent) ----
+    # ---- Anthropic (fixed-pipeline deep agent) ----
     anthropic_api_key: str = ""
     anthropic_base_url: str = ""
     anthropic_subscription_key: str = ""
     answer_model: str = "claude-sonnet-4-5"
+
+    # ---- OpenAI (durable research agent — OpenAI Agents SDK on Temporal) ----
+    openai_api_key: str = ""
+    agent_model: str = "gpt-4.1"  # OpenAI model for the agent loop; adjust to a current one
+    agent_max_turns: int = 8  # guardrail on the tool-use loop
 
     # ---- Service ports ----
     trigger_api_port: int = 8088

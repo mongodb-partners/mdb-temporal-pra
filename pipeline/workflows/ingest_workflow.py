@@ -1,12 +1,14 @@
 """IngestWorkflow — the drawing's Temporal workflow.
 
   (1) fetch S3 object + chunk (factory by file type) → persist chunks in MDB (batched)
-  (2) embed each chunk (Voyage)  — one activity per chunk, so a crash resumes without re-embed
+  (2) embed chunks (Voyage) — one activity per chunk, run up to _EMBED_BATCH in parallel per
+      wave; a crash resumes without re-embedding already-done chunks
   (3) create / UPDATE the Atlas Search index (re-upload updates in place)
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 from temporalio import workflow
@@ -22,6 +24,9 @@ _EMBED_RETRY = RetryPolicy(
     maximum_interval=timedelta(seconds=30),
     maximum_attempts=6,
 )
+
+# Embed up to this many chunks concurrently per wave (bounded fan-out).
+_EMBED_BATCH = 10
 
 
 @workflow.defn
@@ -42,15 +47,19 @@ class IngestWorkflow:
         if n == 0:
             return {"doc_id": doc_id, "status": "empty", "indexed": 0}
 
-        # Stage 2 — embed each staged chunk (deterministic chunk ids from stage 1).
-        for i in range(n):
-            await workflow.execute_activity(
-                embed_staged_chunk,
-                args=[f"{doc_id}:{i}", None],
-                start_to_close_timeout=timedelta(minutes=2),
-                heartbeat_timeout=timedelta(seconds=30),
-                retry_policy=_EMBED_RETRY,
-            )
+        # Stage 2 — embed staged chunks, up to _EMBED_BATCH in parallel per wave
+        # (deterministic chunk ids from stage 1; each activity stays independently retryable).
+        for start in range(0, n, _EMBED_BATCH):
+            await asyncio.gather(*(
+                workflow.execute_activity(
+                    embed_staged_chunk,
+                    args=[f"{doc_id}:{i}", None],
+                    start_to_close_timeout=timedelta(minutes=2),
+                    heartbeat_timeout=timedelta(seconds=30),
+                    retry_policy=_EMBED_RETRY,
+                )
+                for i in range(start, min(start + _EMBED_BATCH, n))
+            ))
 
         # Stage 3 — upsert into the searchable collection + ensure index (update in place).
         result = await workflow.execute_activity(

@@ -225,4 +225,5 @@ mongodb-temporal-sa-pra/
 | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | **[docs/RUNBOOK.md](docs/RUNBOOK.md)** | Prerequisites, API key setup, local spin-up, cloud infra references                               |
 | **[docs/LLD.md](docs/LLD.md)**         | Low-level design — data contracts, workflow internals, scaling to multiple sources and data types |
+| **[docs/agent-retrieval.md](docs/agent-retrieval.md)** | The deep agent — retrieval, rerank, synthesis, and how it ties to the vector store |
 | **[docs/decisions/](docs/decisions/)** | Architecture Decision Records — e.g. ADR 0001 (direct-from-S3 triggering)                          |
