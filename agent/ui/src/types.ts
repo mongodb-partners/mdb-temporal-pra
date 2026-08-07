@@ -1,7 +1,13 @@
-export interface AgentResponse {
+export interface StartResponse {
   workflow_id: string;
-  query: string;
-  answer: string | null;
-  model: string;
+}
+
+export interface ProgressResponse {
+  workflow_id: string;
+  status?: string;
+  steps: string[];
   tool_calls: string[];
+  answer: string | null;
+  model: string | null;
+  done: boolean;
 }

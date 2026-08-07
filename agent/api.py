@@ -1,7 +1,8 @@
 """Deep-agent FastAPI backend.
 
-  POST /query    {query, k?, top_k?}  -> {answer, sources[], ...}   (fixed RAG pipeline)
-  POST /research {query}              -> {answer, tool_calls[], ...} (durable agent workflow)
+  POST /query               {query, k?, top_k?} -> {answer, sources[], ...} (fixed RAG pipeline)
+  POST /research            {query}             -> {workflow_id}             (start durable agent)
+  GET  /research/{wf_id}                        -> {steps[], answer, done…}  (poll live progress)
   GET  /health
 
 Run:  uv run python -m agent.api
@@ -101,8 +102,8 @@ class ResearchRequest(BaseModel):
 
 @app.post("/research")
 async def research(req: ResearchRequest) -> dict:
-    """Durable research agent: starts the DeepResearchAgent workflow (OpenAI Agents SDK on
-    Temporal) and returns its cited answer. Watch the reasoning trajectory in the Temporal UI."""
+    """Start the durable research agent (OpenAI Agents SDK on Temporal). Returns the workflow
+    id immediately; poll GET /research/{workflow_id} for live progress and the final answer."""
     if not settings.openai_api_key:
         raise HTTPException(
             status_code=503,
@@ -110,13 +111,35 @@ async def research(req: ResearchRequest) -> dict:
         )
     client = await _get_agent_client()
     wf_id = f"agent-{uuid.uuid4().hex[:16]}"
-    result = await client.execute_workflow(
+    await client.start_workflow(
         "DeepResearchAgent",
         req.query,
         id=wf_id,
         task_queue=settings.temporal_task_queue,
     )
-    return {"workflow_id": wf_id, **result}
+    return {"workflow_id": wf_id}
+
+
+@app.get("/research/{workflow_id}")
+async def research_status(workflow_id: str) -> dict:
+    """Poll live progress + final answer for a research run (queries the workflow's `progress`)."""
+    client = await _get_agent_client()
+    handle = client.get_workflow_handle(workflow_id)
+    desc = await handle.describe()
+    status = desc.status.name if desc.status else "UNKNOWN"
+
+    progress: dict = {
+        "steps": [], "tool_calls": [], "answer": None, "model": None, "done": False,
+    }
+    try:
+        progress = await handle.query("progress")
+    except Exception:  # noqa: BLE001 - a failed/terminated run can't be queried
+        pass
+
+    # A terminal, non-completed status means the run won't produce an answer.
+    if status not in ("RUNNING", "COMPLETED"):
+        progress["done"] = True
+    return {"workflow_id": workflow_id, "status": status, **progress}
 
 
 def main() -> None:

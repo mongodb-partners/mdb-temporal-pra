@@ -1,10 +1,10 @@
 import { useState } from "react";
-import type { AgentResponse } from "./types";
+import type { ProgressResponse, StartResponse } from "./types";
 
 const EXAMPLES = [
-  "How do I start a Temporal worker in Python?",
+  "Compare Signals, Queries, and Updates in Temporal — how does each work and when to use it?",
   "What is a Temporal Workflow and how does it work?",
-  "How do Signals and Queries differ in Temporal?",
+  "How do I start a Temporal worker in Python?",
 ];
 
 // Temporal Web UI (dev server). Used to deep-link the durable agent workflow run.
@@ -14,34 +14,57 @@ function workflowUrl(id: string): string {
   return `${TEMPORAL_UI}/namespaces/default/workflows/${encodeURIComponent(id)}`;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export default function App() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [res, setRes] = useState<AgentResponse | null>(null);
+  const [steps, setSteps] = useState<string[]>([]);
+  const [res, setRes] = useState<ProgressResponse | null>(null);
 
   async function run(q: string) {
     const question = q.trim();
     if (!question || loading) return;
     setLoading(true);
     setError(null);
+    setRes(null);
+    setSteps([]);
     try {
-      const r = await fetch("/research", {
+      // 1. Start the durable workflow.
+      const start = await fetch("/research", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: question }),
       });
-      if (!r.ok) {
-        let detail = `API ${r.status}`;
+      if (!start.ok) {
+        let detail = `API ${start.status}`;
         try {
-          const body = await r.json();
-          if (body?.detail) detail = body.detail;
+          const b = await start.json();
+          if (b?.detail) detail = b.detail;
         } catch {
-          // non-JSON error body — keep the status message
+          // non-JSON body — keep the status message
         }
         throw new Error(detail);
       }
-      setRes(await r.json());
+      const { workflow_id }: StartResponse = await start.json();
+
+      // 2. Poll the progress query until the run finishes (bounded so a stuck run stops).
+      for (let i = 0; i < 300; i++) {
+        await sleep(600);
+        const r = await fetch(`/research/${workflow_id}`);
+        if (!r.ok) throw new Error(`API ${r.status}`);
+        const p: ProgressResponse = await r.json();
+        setSteps(p.steps ?? []);
+        if (p.done || (p.status && p.status !== "RUNNING")) {
+          setRes(p);
+          if (p.status && p.status !== "COMPLETED" && !p.answer) {
+            setError(`Workflow ${p.status}`);
+          }
+          return;
+        }
+      }
+      throw new Error("Timed out waiting for the agent.");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -49,13 +72,11 @@ export default function App() {
     }
   }
 
-  const toolCalls = res?.tool_calls ?? [];
-
   return (
     <div className="app">
       <header>
         <h1>Temporal Docs — Research Agent</h1>
-        <p className="sub">Durable OpenAI agent on Temporal · vector search + rerank tools over MongoDB Atlas</p>
+        <p className="sub">Durable OpenAI agent on Temporal · vector search + rerank + web search</p>
       </header>
 
       <form
@@ -84,16 +105,20 @@ export default function App() {
         ))}
       </div>
 
-      {loading && (
-        <div className="note">
-          Running the agent as a durable Temporal workflow… the full answer returns when the
-          agent finishes (results are not streamed).
+      {error && <div className="error">Error: {error}</div>}
+
+      {steps.length > 0 && (
+        <div className="trajectory">
+          <h3>{loading ? "Working…" : "What the agent did"}</h3>
+          <ol className="tool-calls">
+            {steps.map((s, i) => (
+              <li key={i} className={loading && i === steps.length - 1 ? "active" : ""}>{s}</li>
+            ))}
+          </ol>
         </div>
       )}
 
-      {error && <div className="error">Error: {error}</div>}
-
-      {res && !loading && (
+      {res?.answer && (
         <div className="results">
           <div className="meta">
             model <code>{res.model}</code> ·{" "}
@@ -101,28 +126,12 @@ export default function App() {
               view workflow in Temporal UI ↗
             </a>
           </div>
-
-          {res.answer ? (
-            <div className="answer">
-              <div className="answer-head">
-                <h2>Answer</h2>
-              </div>
-              <div className="answer-body">{res.answer}</div>
+          <div className="answer">
+            <div className="answer-head">
+              <h2>Answer</h2>
             </div>
-          ) : (
-            <div className="note">The agent did not return an answer.</div>
-          )}
-
-          {toolCalls.length > 0 && (
-            <div className="trajectory">
-              <h3>What the agent did</h3>
-              <ol className="tool-calls">
-                {toolCalls.map((t, i) => (
-                  <li key={i}><code>{t}</code></li>
-                ))}
-              </ol>
-            </div>
-          )}
+            <div className="answer-body">{res.answer}</div>
+          </div>
         </div>
       )}
     </div>
