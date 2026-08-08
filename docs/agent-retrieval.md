@@ -1,97 +1,106 @@
-# Agent — retrieval & synthesis
+# Agent — durable research agent
 
-The "deep agent" is a compact retrieval-augmented-generation (RAG) endpoint with a memory
-write. The whole agent is the `ask()` function in `agent/retrieval.py`; `agent/api.py` exposes
-it over HTTP and the React/Vite UI (`agent/ui/`) calls it.
+The agent is a **durable research agent** built with the **OpenAI Agents SDK**, whose reasoning
+loop runs **as a Temporal workflow** (`DeepResearchAgent`) via the Temporal ↔ OpenAI Agents SDK
+integration (`temporalio.contrib.openai_agents`). Model calls and tool calls execute as Temporal
+activities, so the entire trajectory is durable, resumable, and inspectable in the Temporal UI.
+Code: `agent/agent_workflow.py`, `agent/tools.py`, `agent/api.py`, `agent/ui/`.
 
 ## Query flow
 
 ```mermaid
 flowchart TB
-    user([User]) --> ui["React + Vite UI :5173"]
-    ui -->|"POST /query"| api["FastAPI /query<br/>agent/api.py"]
-    api --> ask["ask()  agent/retrieval.py"]
+    user([User]) --> ui["React UI :5173"]
+    ui -->|"POST /research"| api["FastAPI  agent/api.py"]
+    api -->|"start_workflow → workflow_id"| wf
+    ui -. "poll GET /research/{id}" .-> api
+    api -. "query 'progress'" .-> wf
 
-    subgraph flow ["Retrieval pipeline (per query)"]
+    subgraph wf ["DeepResearchAgent — Temporal workflow"]
       direction TB
-      active["get_active()"] --> vs["vector_search<br/>top k=10"]
-      vs --> rr["_rerank<br/>to top 5"]
-      rr --> syn["_synthesize"]
-      syn --> mem["_remember<br/>best-effort"]
+      loop["OpenAI Agents SDK Runner<br/>(agent reasoning loop)"]
+      loop --> answer["cited answer + step trace"]
     end
 
-    ask --> active
-
-    active -. "active collection / model / index" .-> tcfg[("Atlas: temporal_config")]
-    vs -. "embed query (input_type=query)" .-> vemb[["Voyage voyage-3.5"]]
-    vs -. "$vectorSearch" .-> know[("Atlas: knowledge<br/>+ vector index")]
-    rr -. "rerank" .-> vrr[["Voyage rerank-2.5"]]
-    syn -. "Messages API - answer from sources, cite [n]" .-> claude[["Anthropic Claude"]]
-    mem -. "query, answer, source ids, ts" .-> amem[("Atlas: agent_memory")]
-
-    mem --> resp["answer + sources[]"]
-    resp --> ui
+    loop -. "model turn (activity)" .-> oai[["OpenAI model<br/>+ hosted web_search"]]
+    loop -. "vector_search_tool (activity)" .-> know[("Atlas: knowledge + vector index")]
+    loop -. "rerank_tool (activity)" .-> rer[["Voyage rerank-2.5"]]
+    know -. "query embedding" .-> emb[["Voyage voyage-3.5"]]
 ```
 
-Solid arrows are the request path and the ordered pipeline steps; dotted arrows are the
-external call each step makes.
+Solid arrows are the request path and the agent loop; dotted arrows are the external call each
+step makes.
 
 ## Systems used
 
-| System            | Role                                                        |
-| ----------------- | ----------------------------------------------------------- |
-| **FastAPI**       | Backend; `POST /query` + `/health` on `:8090` (`agent/api.py`) |
-| **React + Vite**  | Chat UI on `:5173` (`agent/ui/src/`)                        |
-| **MongoDB Atlas** | Vector store (`knowledge`), memory (`agent_memory`), active pointer (`temporal_config`) |
-| **Voyage AI**     | Query **embedding** (`voyage-3.5`) and **rerank** (`rerank-2.5`) |
-| **Anthropic Claude** | Answer **synthesis** (`settings.answer_model`)           |
+| System            | Role                                                                    |
+| ----------------- | ----------------------------------------------------------------------- |
+| **Temporal**      | Runs the agent loop as a durable workflow; model + tool calls are activities |
+| **OpenAI Agents SDK** | The agent framework (tool selection, loop); model = `AGENT_MODEL`   |
+| **MongoDB Atlas** | Vector store (`knowledge`) queried by the `vector_search` tool          |
+| **Voyage AI**     | Query **embedding** (`voyage-3.5`) + **rerank** (`rerank-2.5`) inside the tools |
+| **FastAPI**       | `POST /research` (start) + `GET /research/{id}` (poll) on `:8090`        |
+| **React + Vite**  | Chat UI on `:5173`; polls progress and renders the live step feed       |
 
 ## How it works
 
-`ask(query, k=10, top_k=5)` (`agent/retrieval.py`) runs a linear pipeline:
+`DeepResearchAgent.run(query)` (`agent/agent_workflow.py`) builds an `Agent` and runs
+`Runner.run(agent, query, hooks=…)`. The agent decides which tools to call and how often:
 
-1. **Resolve the active target** — `get_active()` reads `temporal_config` for the live
-   collection, index, and embedding model (cut-over-aware).
-2. **Vector search** — `vector_search` (`pipeline/retrieval.py`) embeds the query with Voyage
-   (`input_type="query"`) and runs Atlas `$vectorSearch` on the active `knowledge` collection
-   (`numCandidates = max(100, k*20)`, `limit = k`). Returns the top `k` chunks with
-   `vectorSearchScore`.
-3. **Rerank** — `_rerank` reorders those `k` hits down to `top_k` via Voyage `rerank-2.5`
-   (over-retrieve then rerank).
-4. **Synthesize** — `_synthesize` makes one Anthropic Messages API call (non-streaming,
-   `max_tokens=1024`). System prompt: *answer ONLY from the provided sources, cite inline as
-   `[n]`*. User message = the question + the numbered chunks.
-5. **Remember** — `_remember` inserts the query, answer, source `chunk_id`s, model, and
-   timestamp into `agent_memory` (best-effort).
+1. **Tools (as activities).** `vector_search_tool` and `rerank_tool` (`agent/tools.py`) are
+   Temporal activities exposed to the agent via `activity_as_tool`:
+   - `vector_search_tool(query, k)` — Voyage-embeds the query and `$vectorSearch`es the active
+     `knowledge` collection; returns candidate chunks (`chunk_id`, `source_uri`, `text`, `score`).
+   - `rerank_tool(query, chunk_ids, top_k)` — reloads those chunks' text **server-side** by id
+     and reranks with Voyage `rerank-2.5`, so the model never shuttles chunk text through tool
+     arguments.
+   - A hosted **`WebSearchTool`** supplements the corpus; being hosted, it runs *inside* the
+     model-call activity (OpenAI Responses API), not as a separate Temporal activity.
+2. **Instructions.** Decompose multi-part questions and search each sub-topic separately; rerank
+   the collected candidates; prefer the ingested docs over the open web; answer only from
+   gathered sources with inline `[n]` citations.
+3. **Answer.** The agent model writes the final cited answer itself — there is no separate
+   synthesis step.
 
-The response carries `answer`, `answer_available`, the serving `active_collection` / `model`,
-and `sources[]` (each with `s3_uri`, `chunk_id`, rerank + vector scores, and a 600-char
-snippet).
+## Live progress (no token streaming)
 
-## How it is tied to the vector store
+Because the loop is a workflow, progress can be surfaced without streaming tokens:
 
-- **Shared retrieval.** The agent reuses the pipeline's `vector_search` — one definition, not a
-  copy.
-- **Cut-over aware, no restart.** Every query calls `get_active()`, so a blue/green model
-  upgrade (`make backfill` → `make cutover`) flips the agent to `knowledge_v2` and its index
-  transparently. The query is embedded with the **active model** (not hard-coded), so after a
-  cutover to a new embedding model, queries automatically match the collection's model/dims.
-- **Same database in and out.** Retrieval reads Atlas; memory writes back to Atlas — no copy,
-  no lag.
-- **Self-healing indexes.** On startup (`agent/api.py`) the backend ensures the collections and
-  the Atlas Vector Search index exist before serving.
+- A `_ProgressHooks(RunHooks)` appends human-readable steps ("Searching the docs…",
+  "Reranking…", "Reasoning…") to workflow state as tools/model turns fire.
+- A `@workflow.query def progress()` exposes `{steps, tool_calls, answer, done}` — read-only,
+  safe to poll, replay-safe (steps rebuild from recorded activity results).
+- `POST /research` starts the workflow and returns a `workflow_id`; the UI polls
+  `GET /research/{id}` (~600 ms) and renders the live step list, then the answer when `done`.
+
+## How it ties to the vector store
+
+- **Shared retrieval.** `vector_search_tool` wraps `pipeline.retrieval.vector_search` — the same
+  retrieval code the ingestion side's tests exercise; "search Atlas" is defined once.
+- **Cut-over aware.** Retrieval reads the active collection/model/index from `temporal_config`
+  on every call, and embeds the query with the **active** model — so a blue/green model upgrade
+  (`make backfill` → `make cutover`) is transparent, with query and document vectors always in
+  the same space.
+- **Same database.** The agent reads the exact `knowledge` collection the ingestion pipeline
+  wrote — no copy, no lag.
+
+## Durability & observability
+
+- **Resumable:** if the worker crashes mid-run, Temporal resumes the agent loop instead of
+  restarting it.
+- **Auditable:** every model call and `vector_search`/`rerank` tool call is a workflow-history
+  event — the trajectory is replayable in the Temporal UI (the hosted web search folds into the
+  model activity rather than appearing as its own event).
+- **Opt-in:** the agent and its `OpenAIAgentsPlugin` load only when `OPENAI_API_KEY` is set;
+  without it the worker runs ingestion exactly as before and `/research` returns a clear 503.
 
 ## Notes / current limitations
 
-- **Not agentic in the tool-using sense.** There is no planning loop, tool use, or multi-step
-  reasoning — it is a single retrieve → rerank → synthesize → log pass.
-- **Memory is write-only.** `_remember` records every Q&A into `agent_memory`, but nothing
-  reads it back into retrieval or answering. Today it is an audit log of interactions, not a
-  memory that influences future answers.
-- **Graceful degradation.** If rerank fails, it falls back to vector order; if the Anthropic key
-  is missing/placeholder, it returns ranked sources with `answer: null`. Retrieval works with
-  zero LLM cost — only synthesis needs Claude.
-- **No streaming.** Synthesis is a single `messages.create` call returning one JSON response
-  (not server-sent streaming).
-- **Proxy/Azure-aware Claude client.** `_synthesize` supports `anthropic_base_url` +
-  subscription-key headers, so it can front an Azure-hosted or gateway'd Claude.
+- **Web search is a hosted tool** — it runs inside the model-call activity and requires a
+  web-search-capable OpenAI model (`AGENT_MODEL`). It surfaces as a "Reasoning…" step, not a
+  distinct "Searching the web…" step. A custom SERP tool wrapped as an activity would make it a
+  first-class, individually-auditable step.
+- **No token streaming** — progress is step-level via query polling, not token-by-token.
+- **Agent memory is not written yet** — the agent doesn't read/write long-term memory in its
+  loop. Atlas remains the intended store for it (same database as retrieval); wiring it in is a
+  follow-up.

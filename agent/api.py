@@ -1,8 +1,7 @@
 """Deep-agent FastAPI backend.
 
-  POST /query               {query, k?, top_k?} -> {answer, sources[], ...} (fixed RAG pipeline)
-  POST /research            {query}             -> {workflow_id}             (start durable agent)
-  GET  /research/{wf_id}                        -> {steps[], answer, done…}  (poll live progress)
+  POST /research            {query}      -> {workflow_id}            (start durable research agent)
+  GET  /research/{wf_id}                 -> {steps[], answer, done…} (poll live progress)
   GET  /health
 
 Run:  uv run python -m agent.api
@@ -25,8 +24,6 @@ from temporalio.contrib.openai_agents import ModelActivityParameters, OpenAIAgen
 from infra.create_atlas_index import ensure_atlas_indexes, ensure_collections_and_indexes
 from pipeline.config import settings
 
-from .retrieval import ask
-
 app = FastAPI(title="Temporal deep agent")
 logger = logging.getLogger(__name__)
 
@@ -37,12 +34,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-class QueryRequest(BaseModel):
-    query: str
-    k: int = 10
-    top_k: int = 5
 
 
 @app.on_event("startup")
@@ -65,12 +56,7 @@ async def ensure_index_on_startup() -> None:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "answer_model": settings.answer_model}
-
-
-@app.post("/query")
-async def query(req: QueryRequest) -> dict:
-    return ask(req.query, k=req.k, top_k=req.top_k)
+    return {"ok": True, "agent_model": settings.agent_model}
 
 
 _agent_client: Client | None = None

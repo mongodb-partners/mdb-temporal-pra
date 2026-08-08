@@ -48,15 +48,9 @@ class Settings(BaseSettings):
     temporal_namespace: str = "default"
     temporal_task_queue: str = "temporal-pipeline"
 
-    # ---- Kafka (Confluent cp-kafka) + Kafka Connect ----
-    kafka_bootstrap: str = "localhost:9092"
-    kafka_connect_url: str = "http://localhost:8083"
-    s3_events_topic: str = "s3-events"  # MinIO publishes native S3 events here
-
     # ---- MongoDB Atlas ----
     mongodb_uri: str = ""
     mongodb_db: str = "temporal"
-    src_collection: str = "sources"               # sink-connector landing docs (ASP source)
     chunks_collection: str = "chunks_staging"     # staged chunks between workflow stages
     knowledge_collection: str = "knowledge"       # searchable embedded chunks (blue)
     knowledge_v2_collection: str = "knowledge_v2" # blue/green backfill target (green)
@@ -69,12 +63,6 @@ class Settings(BaseSettings):
     voyage_model: str = "voyage-3.5"
     voyage_rerank_model: str = "rerank-2.5"
     embed_dim: int = 1024
-
-    # ---- Anthropic (fixed-pipeline deep agent) ----
-    anthropic_api_key: str = ""
-    anthropic_base_url: str = ""
-    anthropic_subscription_key: str = ""
-    answer_model: str = "claude-sonnet-4-5"
 
     # ---- OpenAI (durable research agent — OpenAI Agents SDK on Temporal) ----
     openai_api_key: str = ""

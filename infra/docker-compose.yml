@@ -1,90 +1,19 @@
-# Local infra for the connector-based ingress.
+# Local infra for the direct-to-Temporal ingestion path.
 # Temporal runs separately via the CLI:  temporal server start-dev
 #
 #   docker compose --env-file .env -f infra/docker-compose.yml up -d
 #
-# Default local flow (webhook): MinIO (S3) --native webhook--> trigger_api /ingest-event
-#       (host process, :8088) --> Temporal IngestWorkflow.  This is what `make start` uses.
-#
-# Opt-in connector flow (`make kafka-up`, profile "kafka"):
-#       MinIO --native events--> Kafka 's3-events' --> MongoDB Sink Connector
-#       --> Atlas temporal.sources --> (ASP / trigger listener) --> Temporal IngestWorkflow
+# Local flow: MinIO (S3) --native webhook--> trigger_api /ingest-event (host process, :8088)
+#             --> Temporal IngestWorkflow.  In production, an S3 -> Lambda trigger plays the
+#             same role (see pipeline/lambda_handler.py).
 #
 # Endpoints:
-#   Kafka bootstrap (host):   localhost:29092   (KAFKA_BOOTSTRAP, debugging only)
-#   Kafka Connect REST:       http://localhost:8083
-#   MinIO S3 API (host):      http://localhost:9000   (S3_ENDPOINT_URL)
-#   MinIO Console:            http://localhost:9001    (minioadmin / minioadmin)
+#   MinIO S3 API (host):  http://localhost:9000   (S3_ENDPOINT_URL)
+#   MinIO Console:        http://localhost:9001   (minioadmin / minioadmin)
 
 name: teamporal-app
 
 services:
-  kafka:
-    image: confluentinc/cp-kafka:7.6.1
-    container_name: temporal-kafka
-    profiles: ["kafka"]   # opt-in: `make kafka-up`. Not started by default.
-    ports:
-      - "29092:29092"   # host access (debugging)
-    environment:
-      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
-      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-    healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
-    volumes:
-      - kafka-data:/var/lib/kafka/data
-
-  connect:
-    image: confluentinc/cp-kafka-connect:7.6.1
-    container_name: temporal-connect
-    profiles: ["kafka"]   # opt-in: `make kafka-up`. Not started by default.
-    depends_on:
-      kafka:
-        condition: service_healthy
-    ports:
-      - "8083:8083"
-    environment:
-      CONNECT_BOOTSTRAP_SERVERS: "kafka:9092"
-      CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
-      CONNECT_GROUP_ID: "temporal-connect"
-      CONNECT_CONFIG_STORAGE_TOPIC: "_connect-configs"
-      CONNECT_OFFSET_STORAGE_TOPIC: "_connect-offsets"
-      CONNECT_STATUS_STORAGE_TOPIC: "_connect-status"
-      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
-      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
-      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
-      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
-    command:
-      - bash
-      - -c
-      - |
-        echo "Installing MongoDB Kafka connector..."
-        confluent-hub install --no-prompt mongodb/kafka-connect-mongodb:1.13.0
-        echo "Launching Kafka Connect..."
-        /etc/confluent/docker/run
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors >/dev/null || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
   minio:
     image: minio/minio:latest
     container_name: temporal-minio
@@ -92,19 +21,13 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-      # Default local trigger: native S3 -> webhook target (id PRIMARY) -> the trigger_api
-      # /ingest-event endpoint, which runs as a host process (reached via host.docker.internal).
+      # Native S3 -> webhook target (id PRIMARY) -> the trigger_api /ingest-event endpoint,
+      # which runs as a host process (reached via host.docker.internal).
       MINIO_NOTIFY_WEBHOOK_ENABLE_PRIMARY: "on"
       MINIO_NOTIFY_WEBHOOK_ENDPOINT_PRIMARY: "http://host.docker.internal:8088/ingest-event"
       # Persistent event store: lets MinIO start before the host trigger_api is up and replay
       # buffered events when it comes online (at-least-once locally).
       MINIO_NOTIFY_WEBHOOK_QUEUE_DIR_PRIMARY: "/data/.minio/events/webhook"
-      # Opt-in Kafka target (id PRIMARY) for the connector showcase (make kafka-up). queue_dir
-      # lets MinIO start even when the Kafka broker isn't running.
-      MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY: "on"
-      MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY: "kafka:9092"
-      MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY: "s3-events"
-      MINIO_NOTIFY_KAFKA_QUEUE_DIR_PRIMARY: "/data/.minio/events/kafka"
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach the host-run trigger_api from the container
     ports:
@@ -113,8 +36,7 @@ services:
     volumes:
       - minio-data:/data
 
-  # One-shot (default): create the bucket and subscribe ObjectCreated events to the WEBHOOK target,
-  # removing any stale Kafka subscription so the default is webhook-only regardless of volume history.
+  # One-shot: create the bucket and subscribe ObjectCreated events to the webhook target.
   minio-setup:
     image: minio/mc:latest
     container_name: temporal-minio-setup
@@ -128,34 +50,10 @@ services:
           echo 'waiting for minio...'; sleep 2;
         done &&
         mc mb --ignore-existing local/temporal-datasources &&
-        (mc event remove local/temporal-datasources arn:minio:sqs::PRIMARY:kafka --event put 2>/dev/null || true) &&
         mc event add local/temporal-datasources arn:minio:sqs::PRIMARY:webhook --event put --ignore-existing &&
         echo 'MinIO bucket temporal-datasources wired to webhook /ingest-event:' &&
         mc event list local/temporal-datasources
     restart: "no"
 
-  # One-shot (opt-in, profile "kafka"): also subscribe ObjectCreated events to the KAFKA target
-  # for the MongoDB Sink Connector showcase. Both subscriptions can be active at once — the
-  # IngestWorkflow's deterministic id makes a duplicate trigger a harmless no-op.
-  minio-setup-kafka:
-    image: minio/mc:latest
-    container_name: temporal-minio-setup-kafka
-    profiles: ["kafka"]
-    depends_on:
-      minio:
-        condition: service_started
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >
-        until mc alias set local http://minio:9000 minioadmin minioadmin; do
-          echo 'waiting for minio...'; sleep 2;
-        done &&
-        mc mb --ignore-existing local/temporal-datasources &&
-        mc event add local/temporal-datasources arn:minio:sqs::PRIMARY:kafka --event put --ignore-existing &&
-        echo 'MinIO bucket temporal-datasources also wired to Kafka topic s3-events:' &&
-        mc event list local/temporal-datasources
-    restart: "no"
-
 volumes:
-  kafka-data:
   minio-data:

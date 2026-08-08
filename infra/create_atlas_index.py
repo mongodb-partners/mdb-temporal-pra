@@ -38,7 +38,6 @@ def ensure_collections_and_indexes() -> dict[str, list[str]]:
     created_indexes: list[str] = []
 
     required_collections = [
-        settings.src_collection,
         settings.chunks_collection,
         settings.knowledge_collection,
         settings.knowledge_v2_collection,

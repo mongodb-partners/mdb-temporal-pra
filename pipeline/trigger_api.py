@@ -3,7 +3,7 @@
 Two entrypoints, both starting the IngestWorkflow:
   - POST /ingest-event   raw S3/MinIO ObjectCreated event envelope. Used locally by the
     MinIO webhook target and — as the *same* handler code — by the AWS Lambda.
-  - POST /ingest-trigger flat {bucket, key} body. Used by Atlas Stream Processing ($https).
+  - POST /ingest-trigger flat {bucket, key} body. A convenience for manual/scripted triggering.
 
 Run:  uv run python -m pipeline.trigger_api
 """
@@ -43,7 +43,7 @@ async def health() -> dict:
 
 @app.post("/ingest-trigger")
 async def ingest_trigger(req: TriggerRequest, request: Request) -> dict:
-    # Flat {bucket, key} body — used by Atlas Stream Processing ($https).
+    # Flat {bucket, key} body — a convenience for manual/scripted triggering.
     ref = S3Ref.make(bucket=req.bucket, key=req.key)
     wf_id = await start_ingest(request.app.state.temporal, ref)
     return {"started": wf_id, "s3_uri": ref.s3_uri}

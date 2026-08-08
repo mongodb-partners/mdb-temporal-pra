@@ -5,7 +5,6 @@ vector_search / rerank tools execute as activities, so the whole trajectory is d
 auditable in the Temporal UI. A hosted web-search tool supplements the docs — it runs inside
 the model-call activity (OpenAI Responses API), not as a separate activity. Live progress is
 exposed via the `progress` query (run hooks append human-readable steps as the agent works).
-Contrast with the fixed `agent/retrieval.py` chain.
 """
 
 from __future__ import annotations

@@ -53,10 +53,10 @@ flowchart LR
     temporal -->|"fetch, chunk, embed, index"| atlas[("MongoDB Atlas<br/>knowledge + vector index")]
     voyage[["Voyage AI<br/>embeddings"]] -.->|"embed"| temporal
 
-    user([User]) --> agent["Deep Agent<br/>FastAPI + React"]
-    agent -->|"vector search"| atlas
-    voyage -.->|"rerank"| agent
-    claude[["Anthropic Claude"]] -.->|"synthesis"| agent
+    user([User]) --> agent["Research agent<br/>(durable, on Temporal)"]
+    agent -->|"vector_search tool"| atlas
+    voyage -.->|"rerank tool"| agent
+    openai[["OpenAI<br/>agent model + web search"]] -.->|"reasoning + answer"| agent
     agent -->|"answer"| user
 ```
 
@@ -68,20 +68,13 @@ flowchart LR
    (`pipeline/lambda_handler.py` / `POST /ingest-event`).
 3. **Temporal** chunks the content, calls **Voyage AI** for embeddings, and upserts into
    **Atlas Search**.
-4. A **Deep Agent** (FastAPI + React) runs vector search over the fresh knowledge and streams
-   answers to the user.
+4. A **durable research agent** (OpenAI Agents SDK, running as a Temporal workflow) answers
+   questions over the fresh knowledge, using vector search + rerank (and web search) as tools.
 
-> **Opt-in connector showcase** (`make kafka-up`): instead of triggering Temporal directly,
-> S3/MinIO events can flow through **Kafka** → a **MongoDB Sink Connector** → the `sources`
-> collection → **Atlas Stream Processing** (change stream) → the Temporal workflow. This
-> demonstrates the MongoDB integration stack; the direct path shown above is the default.
-> Rationale in
+> **Design note:** the direct trigger (Lambda / MinIO webhook → `IngestWorkflow`) means no
+> Kafka or message broker is needed — Temporal's durable execution provides the "don't lose the
+> event once the workflow starts" guarantee. Rationale in
 > [`docs/decisions/0001-trigger-ingestion-directly-from-s3.md`](docs/decisions/0001-trigger-ingestion-directly-from-s3.md).
-
-> **Serverless option:** Atlas Stream Processing's `$https` invocation pairs naturally with
-> [Temporal Serverless Workers on AWS Lambda](https://temporal.io/blog/introducing-temporal-serverless-workers-deploy-temporal-workers-to-aws-lambda)
-> — ASP fires the `$https` trigger, Lambda spins up a Temporal worker on demand, and the
-> `IngestWorkflow` runs to completion with full durability. No always-on worker process required.
 
 ### Division of responsibility
 
@@ -90,7 +83,7 @@ flowchart LR
 | Orchestration, retries, checkpointing, backfill, resumability | **Temporal**          |
 | Operational data, vector index, agent memory & state          | **MongoDB Atlas**     |
 | Embeddings & reranking                                        | **MongoDB Voyage AI** |
-| Answer synthesis                                              | **Anthropic Claude**  |
+| Agent reasoning & answers                                     | **OpenAI (Agents SDK)** |
 
 ---
 
@@ -127,7 +120,6 @@ flowchart TB
 
 ```text
 Database: temporal
-├── sources              ← raw S3 event records (opt-in Kafka Sink Connector path)
 ├── chunks_staging       ← intermediate chunks during IngestWorkflow
 ├── knowledge            ← embedded docs + Atlas Vector Search index (active)
 ├── knowledge_v2         ← BackfillWorkflow writes here on model upgrade (blue/green)
@@ -148,7 +140,7 @@ cd mongodb-temporal-sa-pra
 
 # 2. Copy and fill in credentials
 cp .env.example .env
-# Edit .env: set MONGODB_URI, VOYAGE_API_KEY, ANTHROPIC_API_KEY
+# Edit .env: set MONGODB_URI, VOYAGE_API_KEY, OPENAI_API_KEY
 
 # 3. Install all dependencies (Python + UI)
 make setup
@@ -178,7 +170,6 @@ make stop
 | Agent API         | http://localhost:8090 |                                                |
 | MinIO console     | http://localhost:9001 | username: `minioadmin`, password: `minioadmin` |
 | Trigger API       | http://localhost:8088 | webhook `/ingest-event` (default local trigger) |
-| Kafka Connect API | http://localhost:8083 | opt-in only (`make kafka-up`)                  |
 
 ---
 
@@ -192,15 +183,15 @@ mongodb-temporal-sa-pra/
 ├── .env.example                    ← copy → .env, fill credentials
 ├── tests/                          ← pytest (uv run pytest) — handler + parser tests
 ├── agent/
-│   ├── api.py                      ← FastAPI deep-agent backend (:8090)
-│   ├── retrieval.py                ← vector search + rerank + Claude answer
+│   ├── api.py                      ← FastAPI: /research start + poll (:8090)
+│   ├── agent_workflow.py           ← DeepResearchAgent (OpenAI Agents SDK loop as workflow)
+│   ├── tools.py                    ← agent tools: vector_search, rerank (as activities)
 │   └── ui/                         ← React/Vite chat UI (:5173)
 ├── pipeline/
 │   ├── worker.py                   ← Temporal worker process
 │   ├── trigger.py                  ← shared handle_s3_event → start IngestWorkflow
-│   ├── trigger_api.py              ← webhook /ingest-event (default) + ASP /ingest-trigger
+│   ├── trigger_api.py              ← webhook /ingest-event + manual /ingest-trigger
 │   ├── lambda_handler.py           ← AWS Lambda entrypoint for real S3 (same handler)
-│   ├── trigger_listener.py         ← sources change-stream shim (opt-in Kafka path)
 │   ├── workflows/
 │   │   ├── ingest_workflow.py      ← IngestWorkflow: fetch → chunk → embed → index
 │   │   └── backfill_workflow.py    ← BackfillWorkflow: re-embed → knowledge_v2
@@ -211,10 +202,8 @@ mongodb-temporal-sa-pra/
 │   ├── config_store.py             ← active collection/index pointer
 │   └── search_index.py             ← idempotent Atlas Vector Search management
 └── infra/
-    ├── docker-compose.yml          ← MinIO (default) + opt-in Kafka/Connect (profile)
-    ├── connectors/mongo-sink.json  ← Kafka Connect → temporal.sources (opt-in)
-    ├── atlas_indexes.json          ← Vector Search index definitions
-    └── asp/README.md               ← Atlas Stream Processing setup (production)
+    ├── docker-compose.yml          ← MinIO (S3 events → webhook /ingest-event)
+    └── atlas_indexes.json          ← Vector Search index definitions
 ```
 
 ---

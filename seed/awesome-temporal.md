@@ -6,8 +6,6 @@
 
 Temporal is a [durable execution system](https://youtu.be/W0Ygep6iCJY?t=609). It makes code fault-tolerant and simple.
 
-When I add new content, this should reembed. And it did. Now testing credits. And now testing parallelism.
-
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 

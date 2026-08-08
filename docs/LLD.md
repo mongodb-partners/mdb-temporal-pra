@@ -1,7 +1,7 @@
 # Low-Level Design
 
 **MongoDB × Temporal Partner Reference Architecture**
-Version: 1.0 · Branch: `pipeline-impl` · Date: 2026-07-29
+Version: 2.0 · Branch: `straight-to-temporal-ingest` · Date: 2026-08-07
 
 ---
 
@@ -19,7 +19,7 @@ Version: 1.0 · Branch: `pipeline-impl` · Date: 2026-07-29
 - [8. MongoDB data model](#8-mongodb-data-model)
 - [9. Atlas Vector Search index](#9-atlas-vector-search-index)
 - [10. Trigger layer](#10-trigger-layer)
-- [11. Deep agent](#11-deep-agent)
+- [11. Agent](#11-agent)
 - [12. Configuration reference](#12-configuration-reference)
 - [13. Scaling to multiple data sources](#13-scaling-to-multiple-data-sources)
 - [14. Scaling to multiple data types](#14-scaling-to-multiple-data-types)
@@ -29,17 +29,26 @@ Version: 1.0 · Branch: `pipeline-impl` · Date: 2026-07-29
 
 ## 1. Overview
 
-This implementation is a **durable, change-driven RAG ingestion pipeline** built on three services:
+This implementation is a **durable, event-driven RAG ingestion pipeline** plus a **durable
+research agent**, built on two services:
 
-| Layer               | Service                        | Role                                                                          |
-| ------------------- | ------------------------------ | ----------------------------------------------------------------------------- |
-| Streaming ingestion | Kafka + MongoDB Sink Connector | Decouple sources from processing; land raw events into Atlas                  |
-| Orchestration       | Temporal                       | Chunk → embed → index, with per-step resumability and automatic retry         |
-| Storage + retrieval | MongoDB Atlas                  | Single store for raw records, staged chunks, embedded knowledge, agent memory |
+| Layer               | Service       | Role                                                                            |
+| ------------------- | ------------- | ------------------------------------------------------------------------------- |
+| Orchestration       | Temporal      | Ingestion (chunk → embed → index) and the agent loop — durable, resumable, observable |
+| Storage + retrieval | MongoDB Atlas | Single store for staged chunks, embedded knowledge, agent memory + vector search |
 
-The implementation is intentionally **source-agnostic**. The `S3Ref` / `RawRecord` data contracts
-and the extractor factory are the only points that need extension when adding a new source or file
-type — the workflow, activities, and Atlas storage layer are unchanged.
+Embeddings and reranking are provided by **Voyage AI (MongoDB AI)**.
+
+Ingestion is triggered **directly** from an object-created event — **no Kafka or message
+broker**. The moment the object lands, an AWS Lambda (real S3) or a MinIO webhook (local) starts
+an `IngestWorkflow`; once started, Temporal guarantees it runs to completion through failures.
+This removes the previous Kafka → Sink Connector → `sources` → Atlas Stream Processing chain and
+its operational overhead (see ADR `docs/decisions/0001-trigger-ingestion-directly-from-s3.md`).
+
+The design is **source-agnostic** at two seams: the `S3Ref` data contract + the `handle_s3_event`
+trigger core (adding a source means calling `start_ingest` from a new adapter), and the extractor
+factory (adding a file type means one new extractor class). Workflows, activities, and the Atlas
+storage layer are unchanged in both cases.
 
 ---
 
@@ -47,22 +56,22 @@ type — the workflow, activities, and Atlas storage layer are unchanged.
 
 ```
 pipeline/
-├── worker.py               ← Temporal worker (hosts all workflows + activities)
+├── worker.py               ← Temporal worker (hosts ingestion + agent workflows/activities)
 ├── config.py               ← Pydantic settings (env-driven, lru_cache singleton)
-├── models.py               ← Data contracts: S3Ref, RawRecord, Chunk, EmbeddedChunk
+├── models.py               ← Data contracts: S3Ref, Chunk, EmbeddedChunk
 ├── clients.py              ← Lazy singletons: Temporal, MongoDB, Voyage, S3
-├── trigger_listener.py     ← Local dev: Atlas change-stream → start IngestWorkflow
-├── trigger_api.py          ← Production: ASP $https POST → start IngestWorkflow
-├── trigger.py              ← Shared trigger logic (client connect + workflow start)
+├── trigger.py              ← Shared trigger core: handle_s3_event + start_ingest
+├── trigger_api.py          ← Webhook endpoint: POST /ingest-event (+ manual /ingest-trigger)
+├── lambda_handler.py       ← AWS Lambda entrypoint for real S3 (same handle_s3_event core)
+├── s3util.py               ← Parse an S3 / MinIO ObjectCreated event → list[S3Ref]
 ├── search_index.py         ← Idempotent Atlas Vector Search index management
 ├── config_store.py         ← Active collection/index pointer (cutover)
-├── s3util.py               ← Parse MinIO/S3 event → S3Ref list
+├── retrieval.py            ← Shared Atlas vector search (used by the agents)
 ├── seed.py                 ← Dev utility: upload a local file to MinIO
 ├── seed_repo.py            ← Dev utility: bulk-upload a markdown docs repo
 ├── cutover.py              ← Flip active collection pointer in temporal_config
-├── retrieval.py            ← Shared Atlas vector search (used by agent)
 ├── workflows/
-│   ├── ingest_workflow.py  ← IngestWorkflow: 3-stage, per-chunk checkpointing
+│   ├── ingest_workflow.py  ← IngestWorkflow: 3 stages, per-chunk checkpointing, parallel embed
 │   └── backfill_workflow.py← BackfillWorkflow: paginated re-embed with continue-as-new
 ├── activities/
 │   ├── ingest.py           ← fetch_and_stage_chunks, embed_staged_chunk, index_document
@@ -70,22 +79,25 @@ pipeline/
 └── extractors/
     ├── base.py             ← Extractor ABC + window() splitter + RawChunk
     ├── factory.py          ← get_extractor(): extension → MIME → TextExtractor
-    ├── markdown.py         ← Section-aware markdown extractor
-    ├── pdf.py              ← PyPDF page extractor
-    ├── csv_ext.py          ← Row-group extractor
-    └── text.py             ← Plain text window splitter (fallback)
+    ├── markdown.py / pdf.py / csv_ext.py / text.py
+
+agent/
+├── api.py                  ← FastAPI: /research (start), /research/{id} (poll)
+├── tools.py                ← Agent tools as activities: vector_search_tool, rerank_tool
+├── agent_workflow.py       ← DeepResearchAgent: OpenAI Agents SDK loop as a Temporal workflow
+└── ui/                     ← React/Vite chat UI (polls /research for live progress)
 ```
 
 ---
 
 ## 3. Data contracts
 
-Defined in `pipeline/models.py`. All contracts are plain Python `@dataclass`s — they serialize
-cleanly through Temporal's default JSON data converter and as Kafka message payloads.
+Defined in `pipeline/models.py`. All contracts are plain Python `@dataclass`es — they serialize
+cleanly through Temporal's default JSON data converter.
 
 ### S3Ref
 
-The atomic unit flowing into `IngestWorkflow`. Identifies a single object in S3 (or MinIO).
+The atomic unit passed into `IngestWorkflow`. Identifies a single object in S3 (or MinIO).
 
 ```python
 @dataclass
@@ -98,20 +110,7 @@ class S3Ref:
     content_type: str    # MIME type hint (used by extractor factory)
 ```
 
-### RawRecord
-
-Source-agnostic envelope for the raw Kafka topic. `source` identifies the producer type; other
-sources (RDBMS row, IoT payload, webhook) set `payload` instead of `ref`.
-
-```python
-@dataclass
-class RawRecord:
-    source: str          # "s3" | "rdbms" | "iot" | "webhook" | ...
-    doc_id: str          # stable sha1-derived identifier for this document
-    ref: S3Ref | None    # populated for S3/MinIO sources
-    payload: str | None  # populated for inline-text sources
-    metadata: dict       # source-specific metadata (table name, topic, tags, ...)
-```
+`S3Ref.make(bucket, key, ...)` derives `s3_uri` and strips quotes from the ETag.
 
 ### Chunk / EmbeddedChunk
 
@@ -133,6 +132,9 @@ class EmbeddedChunk(Chunk):
     model: str              # model name used for embedding
     dim: int                # embedding dimensionality
 ```
+
+> The ingest activities stage chunks as plain documents in MongoDB (see §8); `Chunk` /
+> `EmbeddedChunk` are the conceptual schema for those documents.
 
 ### Document identity and deduplication
 
@@ -157,52 +159,50 @@ def sha256_hex(data: bytes | str) -> str:
 [Source]
    │  upload / write
    ▼
-[MinIO / S3]  ──── native S3 event ───▶  [Kafka: s3-events topic]
-                                                │
-                                         Kafka Connect
-                                     (mongo-sink connector)
-                                                │ upsert by key
-                                                ▼
-                                    [Atlas: temporal.sources]
-                                                │
-                                         change stream
-                                                │
-                              ┌─────────────────┴─────────────────┐
-                              │ Dev: trigger_listener.py           │
-                              │ Prod: ASP $https → trigger_api.py  │
-                              └─────────────────┬─────────────────┘
-                                                │ start IngestWorkflow(S3Ref)
-                                                ▼
-                          ┌─────────────────────────────────────┐
-                          │  IngestWorkflow (Temporal)          │
-                          │                                     │
-                          │  Activity 1: fetch_and_stage_chunks │
-                          │    • GET s3://{bucket}/{key}        │
-                          │    • sha256 dedupe check            │
-                          │    • factory extractor → chunks     │
-                          │    • INSERT → temporal.chunks_staging│
-                          │                                     │
-                          │  Activity 2..N: embed_staged_chunk  │
-                          │    • one activity per chunk         │
-                          │    • idempotent (skip if embedded)  │
-                          │    • Voyage embed(text) → vector    │
-                          │    • UPDATE chunks_staging          │
-                          │                                     │
-                          │  Activity N+1: index_document       │
-                          │    • UPSERT chunks → knowledge      │
-                          │    • DELETE stale ordinals          │
-                          │    • ensure_vector_index (idempotent│
-                          │    • DELETE chunks_staging (cleanup)│
-                          └─────────────────────────────────────┘
-                                                │
-                                                ▼
-                                  [Atlas: temporal.knowledge]
-                                  [Atlas Vector Search Index]
-                                                │
-                                     agent vector search
-                                                ▼
-                                   [FastAPI /query → React UI]
+[MinIO / S3]
+   │  native ObjectCreated event
+   ▼
+┌─────────────────────────────────────┐
+│ Trigger adapter                     │
+│   • real S3:  AWS Lambda            │  ── both call ──▶  handle_s3_event(event)
+│   • local:    MinIO webhook         │                      → refs_from_s3_event → S3Ref[]
+│               POST /ingest-event    │                      → start_ingest(S3Ref) per object
+└─────────────────────────────────────┘
+                   │  start_workflow("IngestWorkflow", S3Ref)
+                   │  id = ingest-<sha1(s3_uri)>, conflict = TERMINATE_EXISTING
+                   ▼
+┌─────────────────────────────────────┐
+│  IngestWorkflow (Temporal)          │
+│                                     │
+│  Stage 1: fetch_and_stage_chunks    │
+│    • GET s3://{bucket}/{key}        │
+│    • sha256 dedupe check            │
+│    • factory extractor → chunks     │
+│    • INSERT → temporal.chunks_staging│
+│                                     │
+│  Stage 2: embed_staged_chunk        │
+│    • one activity per chunk         │
+│    • run in parallel waves (10)     │
+│    • idempotent (skip if embedded)  │
+│    • Voyage embed(text) → vector    │
+│                                     │
+│  Stage 3: index_document            │
+│    • UPSERT chunks → knowledge      │
+│    • DELETE stale ordinals          │
+│    • ensure_vector_index (idempotent)│
+│    • DELETE chunks_staging (cleanup)│
+└─────────────────────────────────────┘
+                   │
+                   ▼
+     [Atlas: temporal.knowledge + Vector Search index]
+                   │
+        agent vector search (tool)
+                   ▼
+   [DeepResearchAgent workflow / FastAPI / React UI]
 ```
+
+No `sources` collection and no broker sit between the event and the workflow: the trigger adapter
+calls `start_ingest` directly, and durability begins the instant `start_workflow` returns.
 
 ---
 
@@ -216,24 +216,38 @@ def sha256_hex(data: bytes | str) -> str:
 
 **Stages:**
 
-| #   | Activity                             | Timeout | Retries                  | Idempotent                                              |
-| --- | ------------------------------------ | ------- | ------------------------ | ------------------------------------------------------- |
-| 1   | `fetch_and_stage_chunks`             | 5 min   | 5                        | Yes — short-circuits on matching `doc_content_hash`     |
-| 2…N | `embed_staged_chunk` (one per chunk) | 2 min   | 6 (exp backoff, max 30s) | Yes — skips if `status == "embedded"` and model matches |
-| N+1 | `index_document`                     | 2 min   | 6                        | Yes — upsert by `chunk_id`, prune stale ordinals        |
+| #     | Activity                             | Timeout | Retries                  | Idempotent                                              |
+| ----- | ------------------------------------ | ------- | ------------------------ | ------------------------------------------------------- |
+| 1     | `fetch_and_stage_chunks`             | 5 min   | 5                        | Yes — short-circuits on matching `doc_content_hash`     |
+| 2     | `embed_staged_chunk` (one per chunk) | 2 min   | 6 (exp backoff, max 30s) | Yes — skips if `status == "embedded"` and model matches |
+| 3     | `index_document`                     | 2 min   | 6                        | Yes — upsert by `chunk_id`, prune stale ordinals        |
 
-**Resumability guarantee:** Each chunk is a separate activity. If the worker crashes between
-chunk `i` and chunk `i+1`, Temporal replays the workflow history and skips all already-embedded
-chunks (the `status == "embedded"` check in `embed_staged_chunk`). Only the in-flight chunk is
-retried — no re-embedding of completed work.
+**Parallel embedding:** Stage 2 fans the per-chunk embed activities out in **waves of
+`_EMBED_BATCH` (10)** — up to 10 embeddings run concurrently, then the next wave — rather than
+one at a time:
 
-**Update-in-place:** Re-uploading the same S3 key with different content produces a new
-`doc_content_hash`. `fetch_and_stage_chunks` clears stale staging rows, the workflow re-embeds
-all new chunks, and `index_document` upserts them into `knowledge` and prunes chunks whose
-`ordinal >= new_n` (stale chunks from a previously longer version).
+```python
+for start in range(0, n, _EMBED_BATCH):
+    await asyncio.gather(*(
+        workflow.execute_activity(embed_staged_chunk, args=[f"{doc_id}:{i}", None], ...)
+        for i in range(start, min(start + _EMBED_BATCH, n))
+    ))
+```
 
-**Workflow ID:** derived from `S3Ref.s3_uri` — duplicate triggers for the same key within the
-workflow's run window are deduplicated by Temporal.
+The worker's `ThreadPoolExecutor(max_workers=16)` runs these sync activities concurrently, so the
+wave genuinely parallelizes; bounding to 10 stays within the pool and Voyage rate limits.
+
+**Resumability guarantee:** Each chunk is a separate activity, and `embed_staged_chunk` skips a
+chunk already embedded with the active model. If the worker crashes mid-run, Temporal resumes and
+re-runs only the unfinished chunks — no re-embedding of completed work.
+
+**Update-in-place:** Re-uploading the same key with new content yields a new `doc_content_hash`.
+Stage 1 clears stale staging rows, Stage 2 re-embeds, and Stage 3 upserts into `knowledge` and
+prunes chunks whose `ordinal >= new_n` (leftovers from a previously longer version).
+
+**Workflow ID / dedupe:** the id is `ingest-<sha1(s3_uri)>` (stable per object key) with
+`WorkflowIDConflictPolicy.TERMINATE_EXISTING` — a re-upload while an ingest is still running
+terminates the in-flight run and starts fresh, so there is never a duplicate or a race.
 
 ### 5.2 BackfillWorkflow
 
@@ -242,7 +256,7 @@ workflow's run window are deduplicated by Temporal.
 **Trigger:** model upgrade requiring a dimension change (e.g. `voyage-3.5` 1024-dim → new model).
 
 **Design pattern:** `continue_as_new` — the workflow re-starts itself with a cursor (`after_id`)
-after each batch. This keeps Temporal workflow history bounded regardless of collection size.
+after each batch, keeping Temporal history bounded regardless of collection size.
 
 **Stages per batch:**
 
@@ -252,10 +266,9 @@ after each batch. This keeps Temporal workflow history bounded regardless of col
 | `read_source_batch`           | Paginated read of the active collection, 50 chunks at a time, sorted by `_id`                   |
 | `reembed_and_write` (per doc) | Re-embed with new model, upsert into target collection                                          |
 
-**Blue/green cutover:** `BackfillWorkflow` writes exclusively to `knowledge_v2` (green). The
-active collection pointer in `temporal_config` stays on `knowledge` (blue) until the operator runs
-`make cutover TO=knowledge_v2`. The agent reads the active pointer on every query — no restart
-needed.
+**Blue/green cutover:** `BackfillWorkflow` writes only to `knowledge_v2` (green). The active
+pointer in `temporal_config` stays on `knowledge` (blue) until the operator runs
+`make cutover TO=knowledge_v2`. The agent reads the active pointer on every query — no restart.
 
 ```
 knowledge (blue)  ──read──▶  BackfillWorkflow  ──write──▶  knowledge_v2 (green)
@@ -269,16 +282,13 @@ knowledge (blue)  ──read──▶  BackfillWorkflow  ──write──▶  k
 
 ## 6. Activity design
 
-All activities follow three design rules:
+All activities follow three rules:
 
-1. **Idempotent** — safe to retry at any point; re-running a completed activity produces the same
-   result and no duplicate writes.
+1. **Idempotent** — safe to retry; re-running a completed activity produces no duplicate writes.
 2. **Heartbeating** — long-running activities (`embed_staged_chunk`, `reembed_and_write`) call
-   `activity.heartbeat()` so Temporal can detect stalled activities within the `heartbeat_timeout`
-   (30s).
-3. **Sync execution** — all activities use standard `pymongo`, `voyageai`, and `boto3` clients
-   (synchronous). The worker runs them in a `ThreadPoolExecutor(max_workers=16)`, keeping the
-   Temporal event loop free.
+   `activity.heartbeat()` so Temporal detects stalls within the `heartbeat_timeout` (30s).
+3. **Sync execution** — activities use standard `pymongo`, `voyageai`, `boto3` clients and run in
+   the worker's `ThreadPoolExecutor(max_workers=16)`, keeping the Temporal event loop free.
 
 ### Activity retry policy (embed activities)
 
@@ -291,7 +301,7 @@ RetryPolicy(
 )
 ```
 
-Voyage AI rate-limit errors (429) and transient network errors are handled transparently.
+Voyage AI rate-limit (429) and transient network errors are handled transparently.
 
 ---
 
@@ -299,16 +309,16 @@ Voyage AI rate-limit errors (429) and transient network errors are handled trans
 
 **File:** `pipeline/extractors/`
 
-The extractor factory decouples file-type handling from the workflow. Adding a new format requires
+The extractor factory decouples file-type handling from the workflow. Adding a format requires
 only a new extractor class — no workflow or activity changes.
 
 ### Base class
 
 ```python
 class Extractor(ABC):
-    name: str                                        # identifies extractor in metadata
-    chunk_size: int                                  # configurable via settings
-    chunk_overlap: int                               # configurable via settings
+    name: str
+    chunk_size: int
+    chunk_overlap: int
 
     @abstractmethod
     def pieces(self, body: bytes) -> list[tuple[str, dict]]:
@@ -320,15 +330,8 @@ class Extractor(ABC):
 
 ### Chunking strategy
 
-The base provides a `window()` splitter — a character-window with overlap:
-
-```python
-def window(text: str, size: int, overlap: int) -> list[str]:
-    step = max(1, size - overlap)
-    return [text[i : i + size] for i in range(0, len(text), step) if text[i : i + size].strip()]
-```
-
-Default: `chunk_size=1200`, `chunk_overlap=150` (configurable in `.env`).
+The base provides a `window()` splitter — a character-window with overlap. Default:
+`chunk_size=1200`, `chunk_overlap=150` (configurable in `.env`).
 
 ### Registered extractors
 
@@ -339,17 +342,6 @@ Default: `chunk_size=1200`, `chunk_overlap=150` (configurable in `.env`).
 | `.csv` / `text/csv`, `application/csv` | `CsvExtractor`      | Row-group batching                                                      |
 | anything else                          | `TextExtractor`     | Plain window split (fallback)                                           |
 
-### Factory resolution
-
-```python
-def get_extractor(key: str, content_type: str = "") -> Extractor:
-    ext = key.rsplit(".", 1)[-1].lower()
-    cls = _BY_EXT.get(ext) \
-       or _BY_MIME.get(content_type.split(";")[0].strip()) \
-       or TextExtractor
-    return cls(chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)
-```
-
 Resolution order: **file extension → MIME type → TextExtractor fallback**.
 
 ---
@@ -357,30 +349,6 @@ Resolution order: **file extension → MIME type → TextExtractor fallback**.
 ## 8. MongoDB data model
 
 Database: `temporal` (configurable via `MONGODB_DB`)
-
-### `sources` collection
-
-Written by the Kafka Sink Connector. One document per S3 object key (upsert by key).
-
-```json
-{
-  "_id": "ObjectId",
-  "Records": [
-    {
-      "s3": {
-        "bucket": { "name": "temporal-datasources" },
-        "object": {
-          "key": "docs%2Fmy-doc.pdf",
-          "size": 45123,
-          "eTag": "abc123"
-        }
-      }
-    }
-  ]
-}
-```
-
-The trigger layer (`s3util.py`) parses `Records[*].s3` → `S3Ref`, URL-decoding the key.
 
 ### `chunks_staging` collection
 
@@ -404,7 +372,7 @@ Transient. Created by `fetch_and_stage_chunks`, updated by `embed_staged_chunk`,
 }
 ```
 
-Indexes needed: `{ doc_id: 1 }`, `{ chunk_id: 1 }` (unique), `{ doc_id: 1, status: 1 }`.
+Indexes: `{ doc_id: 1 }`, `{ chunk_id: 1 }` (unique), `{ doc_id: 1, status: 1 }`.
 
 ### `knowledge` collection (active, blue)
 
@@ -412,7 +380,6 @@ The searchable store. Upserted by `index_document` using `chunk_id` as the upser
 
 ```json
 {
-  "_id": "ObjectId",
   "doc_id": "a3f9c1d2e4b5f678",
   "chunk_id": "a3f9c1d2e4b5f678:0",
   "ordinal": 0,
@@ -436,28 +403,14 @@ Same schema as `knowledge`. Populated by `BackfillWorkflow`. Becomes active afte
 Single document: the active collection/index pointer. Read by the agent on every query.
 
 ```json
-{
-  "_id": "active",
-  "collection": "knowledge",
-  "index": "temporalai_search_index"
-}
+{ "_id": "active", "collection": "knowledge", "index": "temporalai_search_index" }
 ```
 
 ### `agent_memory` collection
 
-Written by the deep agent after every query. Stores conversation history, citations, and
-synthesized answers.
-
-```json
-{
-  "_id": "ObjectId",
-  "query": "what does Temporal own in this architecture?",
-  "answer": "...",
-  "sources": [{ "chunk_id": "...", "text": "...", "score": 0.92 }],
-  "model": "voyage-3.5",
-  "timestamp": "ISODate"
-}
-```
+Reserved for agent memory. **Not currently written** by any code path — the durable research
+agent does not yet persist memory. Atlas remains the intended store for it (same database as
+retrieval); wiring it into the agent loop is a follow-up.
 
 ---
 
@@ -465,109 +418,120 @@ synthesized answers.
 
 **File:** `pipeline/search_index.py`
 
-Index definition (created idempotently by `ensure_vector_index` at the end of every
-`index_document` activity):
+Created idempotently by `ensure_vector_index` at the end of every `index_document`:
 
 ```json
 {
   "fields": [
-    {
-      "type": "vector",
-      "path": "embedding",
-      "numDimensions": 1024,
-      "similarity": "cosine"
-    },
+    { "type": "vector", "path": "embedding", "numDimensions": 1024, "similarity": "cosine" },
     { "type": "filter", "path": "doc_id" },
     { "type": "filter", "path": "source_uri" }
   ]
 }
 ```
 
-The `filter` fields allow the agent to scope vector search to a specific document or source URI
-without a full collection scan.
-
-`ensure_vector_index` is idempotent — it lists existing indexes and skips creation if the index
-already exists. The `BackfillWorkflow` calls `ensure_target_index` once before writing to the green
-collection so the new-dimension index is ready before any chunk is written.
+The `filter` fields let retrieval scope to a document or source URI without a full scan.
+`ensure_vector_index` lists existing indexes and skips creation if present. `BackfillWorkflow`
+calls `ensure_target_index` once before writing to the green collection.
 
 ---
 
 ## 10. Trigger layer
 
-Two implementations of the same contract: watch `sources` → parse `S3Ref` → start
-`IngestWorkflow`.
-
-### Local dev — `trigger_listener.py`
-
-Uses PyMongo's `collection.watch()` (change stream) to watch `temporal.sources` for inserts,
-replaces, and updates. Calls `start_ingest(temporal_client, ref)` directly.
+The trigger turns an S3 **ObjectCreated** event into the start of an `IngestWorkflow`. All
+adapters funnel through one shared, source-agnostic core in `pipeline/trigger.py`:
 
 ```python
-pipeline = [{"$match": {"operationType": {"$in": ["insert", "replace", "update"]}}}]
-with coll.watch(pipeline, full_document="updateLookup") as stream:
-    change = await asyncio.to_thread(stream.next)
-    for ref in refs_from_s3_event(change["fullDocument"]):
-        await start_ingest(temporal, ref)
+async def handle_s3_event(client, event) -> list[str]:
+    # parse the event envelope → S3Ref[]; start one IngestWorkflow per object
+    return [await start_ingest(client, ref) for ref in refs_from_s3_event(event)]
+
+async def start_ingest(client, ref: S3Ref) -> str:
+    handle = await client.start_workflow(
+        "IngestWorkflow", ref,
+        id=f"ingest-{doc_id_for_uri(ref.s3_uri)}",
+        task_queue=settings.temporal_task_queue,
+        id_conflict_policy=WorkflowIDConflictPolicy.TERMINATE_EXISTING,
+    )
+    return handle.id
 ```
 
-### Production — ASP + `trigger_api.py`
+`refs_from_s3_event` (`s3util.py`) parses the standard `Records[*].s3` envelope (AWS and MinIO
+share the shape; SNS-wrapped and `s3:TestEvent` bodies are handled), URL-decoding the key.
 
-Atlas Stream Processing watches `temporal.sources` and `$https`-POSTs each new record to
-`POST /ingest-trigger` on `trigger_api.py`. The endpoint parses the body into an `S3Ref` and
-calls `start_ingest`.
+### Local dev — MinIO webhook → `trigger_api.py`
+
+MinIO's native **webhook** notification POSTs each ObjectCreated event to `POST /ingest-event`.
+The endpoint reuses one cached Temporal client (FastAPI lifespan) and calls the shared core:
 
 ```python
-@app.post("/ingest-trigger")
-async def ingest_trigger(body: dict):
-    ref = S3Ref.make(bucket=body["bucket"], key=urllib.parse.unquote_plus(body["key"]))
-    wf_id = await start_ingest(await get_client(), ref)
-    return {"workflow_id": wf_id}
+@app.post("/ingest-event")
+async def ingest_event(request: Request) -> dict:
+    event = await request.json()
+    return {"started": await handle_s3_event(request.app.state.temporal, event)}
 ```
 
-**Serverless option:** the `$https` POST can target an AWS Lambda function running a
-[Temporal Serverless Worker](https://temporal.io/blog/introducing-temporal-serverless-workers-deploy-temporal-workers-to-aws-lambda).
-ASP fires the trigger → Lambda cold-starts a worker → `IngestWorkflow` runs to completion with
-full Temporal durability. No always-on worker process required.
+MinIO uses a `queue_dir`, so events that arrive before the host `trigger_api` is up are buffered
+and replayed (at-least-once locally). A manual `POST /ingest-trigger {bucket, key}` endpoint is
+also provided for scripted/testing triggers.
+
+### Production — AWS Lambda → `lambda_handler.py`
+
+In production, an AWS Lambda subscribed to the bucket's S3 event notifications runs the **same**
+core:
+
+```python
+def lambda_handler(event, context) -> dict:
+    return {"started": asyncio.run(_run(event))}   # _run connects a client, calls handle_s3_event
+```
+
+Same parsing, same `start_ingest`, same durability guarantee — the local webhook is simply the
+stand-in for this Lambda. Deploy notes are in `docs/RUNBOOK.md` §10.
 
 ---
 
-## 11. Deep agent
+## 11. Agent
 
-**Files:** `agent/api.py`, `agent/retrieval.py`, `agent/ui/`
+The durable research agent runs over the same Atlas knowledge base the ingestion pipeline wrote
+(and the same Voyage embedding space).
 
-### Query flow
+### DeepResearchAgent — `agent/agent_workflow.py`
 
-```
-React UI  ──POST /query──▶  FastAPI  ──▶  read temporal_config (active collection)
-                                     ──▶  Voyage embed(query)
-                                     ──▶  Atlas $vectorSearch (top-k chunks)
-                                     ──▶  Voyage rerank(query, chunks)
-                                     ──▶  Anthropic Claude (RAG synthesis)
-                                     ──▶  INSERT agent_memory
-                                     ──▶  streaming SSE response to UI
-```
+The agent's reasoning loop runs **as a Temporal workflow** (`DeepResearchAgent`) via the OpenAI
+Agents SDK ↔ Temporal integration (`temporalio.contrib.openai_agents`). Model calls run as
+activities; the agent decides which tools to call and how often. The whole trajectory is durable,
+resumable, and inspectable in the Temporal UI.
 
-### Vector search query
+- **Tools:** `vector_search_tool` and `rerank_tool` (`agent/tools.py`) are Temporal activities
+  wrapped via `activity_as_tool`. `rerank_tool` takes `chunk_id`s and reloads chunk text
+  server-side, so the model never shuttles chunk text through tool arguments. A hosted
+  `WebSearchTool` supplements the corpus (it runs inside the model-call activity).
+- **Instructions:** decompose multi-part questions and search each sub-topic, rerank, prefer the
+  ingested docs over the open web, answer only from gathered sources with inline `[n]` citations.
+- **Live progress:** run hooks append human-readable steps ("Searching the docs…", "Reranking…",
+  "Reasoning…") to workflow state exposed via a `progress` **query**. `POST /research` starts the
+  workflow and returns a `workflow_id`; the UI polls `GET /research/{id}` for steps + the final
+  answer (step-level, not token streaming).
+- **Opt-in:** the agent + `OpenAIAgentsPlugin` load only when `OPENAI_API_KEY` is set; without it
+  the worker runs ingestion exactly as before.
+
+See `docs/agent-retrieval.md` for the full agent design.
+
+### Vector search query (used by the `vector_search` tool, `pipeline/retrieval.py`)
 
 ```python
 pipeline = [
-    {
-        "$vectorSearch": {
-            "index": active_index,
-            "path": "embedding",
-            "queryVector": query_embedding,
-            "numCandidates": 150,
-            "limit": 10,
-        }
-    },
-    { "$project": { "text": 1, "source_uri": 1, "metadata": 1, "score": { "$meta": "vectorSearchScore" } } }
+    { "$vectorSearch": {
+        "index": active_index, "path": "embedding", "queryVector": query_embedding,
+        "numCandidates": max(100, k * 20), "limit": k,
+    }},
+    { "$project": { "_id": 0, "source_uri": 1, "chunk_id": 1, "text": 1,
+                    "score": { "$meta": "vectorSearchScore" } } },
 ]
 ```
 
-### Reranking
-
-The top-10 vector search results are passed to Voyage `rerank-2.5` with the original query.
-The reranked top-5 are used as context for Claude synthesis.
+The query is embedded with the **active** model from `temporal_config` (so it matches the
+collection's vector space after a cutover).
 
 ---
 
@@ -579,180 +543,91 @@ All settings live in `.env` (loaded by `pipeline/config.py` via Pydantic Setting
 | ------------------------- | ----------------------- | ------------------------------------------- |
 | `MONGODB_URI`             | —                       | Atlas connection string (required)          |
 | `MONGODB_DB`              | `temporal`              | Database name                               |
-| `SRC_COLLECTION`          | `sources`               | Kafka sink landing collection               |
 | `CHUNKS_COLLECTION`       | `chunks_staging`        | Transient staging between workflow stages   |
 | `KNOWLEDGE_COLLECTION`    | `knowledge`             | Active (blue) embedded knowledge store      |
 | `KNOWLEDGE_V2_COLLECTION` | `knowledge_v2`          | Green backfill target                       |
 | `CONFIG_COLLECTION`       | `temporal_config`       | Active pointer document                     |
-| `MEMORY_COLLECTION`       | `agent_memory`          | Agent write-back                            |
+| `MEMORY_COLLECTION`       | `agent_memory`          | Reserved for agent memory (not yet written) |
+| `VOYAGE_API_KEY`          | —                       | Voyage AI key (embeddings + rerank)         |
 | `VOYAGE_MODEL`            | `voyage-3.5`            | Embedding model (1024-dim)                  |
 | `VOYAGE_RERANK_MODEL`     | `rerank-2.5`            | Reranking model                             |
 | `EMBED_DIM`               | `1024`                  | Embedding dimensionality (must match model) |
-| `ANSWER_MODEL`            | `claude-sonnet-4-5`     | Claude model for synthesis                  |
+| `OPENAI_API_KEY`          | —                       | Enables the durable research agent          |
+| `AGENT_MODEL`             | `gpt-4.1`               | OpenAI model for the agent loop             |
+| `AGENT_MAX_TURNS`         | `8`                     | Guardrail on the agent tool-use loop        |
 | `CHUNK_SIZE`              | `1200`                  | Maximum characters per chunk                |
 | `CHUNK_OVERLAP`           | `150`                   | Overlap characters between adjacent chunks  |
 | `TEMPORAL_ADDRESS`        | `localhost:7233`        | Temporal server address                     |
 | `TEMPORAL_TASK_QUEUE`     | `temporal-pipeline`     | Worker task queue                           |
-| `KAFKA_BOOTSTRAP`         | `localhost:29092`       | Kafka broker bootstrap servers              |
+| `TRIGGER_API_PORT`        | `8088`                  | Webhook trigger endpoint port               |
 | `S3_ENDPOINT_URL`         | `http://localhost:9000` | MinIO endpoint (blank = real AWS S3)        |
 | `S3_BUCKET`               | `temporal-datasources`  | Source bucket                               |
+| `SQS_QUEUE_URL`           | —                       | Set to use SQS-driven S3 events in prod     |
 
 ---
 
 ## 13. Scaling to multiple data sources
 
-The architecture is designed with a **source-agnostic Kafka boundary**. Any system that can
-produce records to a Kafka topic can feed the pipeline without modifying workflows or activities.
+The design is **source-agnostic at the trigger seam**: any adapter that can build an `S3Ref` (or
+object pointer) and call `start_ingest` feeds the pipeline — no broker required. The workflow,
+activities, and storage layer are unchanged per source; only the trigger adapter differs.
 
-### Current source: MinIO / S3
+### Current source: S3 / MinIO
 
 ```
-S3 upload → native S3 event notification → Kafka (s3-events topic)
-         → MongoDB Sink Connector → sources → change stream → IngestWorkflow(S3Ref)
+S3 upload → ObjectCreated event → AWS Lambda (prod) / MinIO webhook (local)
+         → handle_s3_event → start_ingest(S3Ref) → IngestWorkflow
 ```
 
 ### Adding a new source: general pattern
 
-Every new source follows the same three-step pattern:
-
 ```
-Step 1:  Produce an event to Kafka (using a connector or producer)
-Step 2:  MongoDB Sink Connector (or a custom consumer) lands it in `temporal.sources`
-Step 3:  trigger_listener / ASP detects the change → start IngestWorkflow
+Step 1:  A source event fires (object store, queue, CDC, webhook).
+Step 2:  A thin adapter (Lambda / small consumer / HTTP handler) turns it into an S3Ref
+         (or, for inline content, uploads to S3 first) and calls start_ingest / handle_s3_event.
 ```
 
-The `RawRecord.source` field and `S3Ref`/`payload` union in `models.py` already accommodate
-non-S3 sources with inline payloads. Extend `s3util.py` (or add a parallel parser) to extract
-the relevant fields for the new source type.
+There is no `sources` collection, no sink connector, and no change-stream watcher to operate.
 
-### Source extension examples
+### Source examples
 
-#### RDBMS (MySQL / Postgres via Debezium)
-
-```
-MySQL binlog → Debezium Kafka connector → Kafka (cdc-events topic)
-           → Custom consumer OR Kafka Connect JDBC sink → temporal.sources
-           → trigger_listener → IngestWorkflow(RawRecord{source="rdbms", payload=row_json})
-```
-
-The `fetch_and_stage_chunks` activity inspects `ref.source` to decide how to retrieve the
-object body. For RDBMS, the row JSON is inlined in `payload` — no S3 fetch required. Add a
-branch in `fetch_and_stage_chunks`:
-
-```python
-if ref.source == "rdbms":
-    body = ref.payload.encode()
-    content_type = "application/json"
-else:
-    obj = s3_client().get_object(Bucket=ref.bucket, Key=ref.key)
-    body = obj["Body"].read()
-```
-
-#### IoT / time-series (MQTT / Kafka native)
-
-```
-IoT device → MQTT broker → Kafka MQTT connector → Kafka (iot-events topic)
-           → MongoDB Sink Connector → temporal.sources
-           → trigger_listener → IngestWorkflow(RawRecord{source="iot", payload=json})
-```
-
-IoT payloads are typically small JSON blobs. A `JsonExtractor` (see §14) handles them directly.
-Batch multiple readings into a single `RawRecord` using a tumbling window in ASP before writing
-to `sources` to reduce workflow starts.
-
-#### MongoDB change stream (existing Atlas data)
-
-```
-Atlas collection (operational) → Atlas Stream Processing change stream
-                               → $https POST to trigger_api.py / ASP processor
-                               → IngestWorkflow(RawRecord{source="mongodb", payload=doc_json})
-```
-
-This path uses Atlas Stream Processing natively without Kafka. The `$project` stage in the ASP
-pipeline extracts the relevant fields and posts them directly to the trigger endpoint.
-
-#### Webhook / HTTP API
-
-```
-External system (Notion, Confluence, GitHub) → webhook POST → trigger_api.py /ingest-trigger
-                                             → IngestWorkflow(S3Ref or RawRecord)
-```
-
-For large files: the webhook handler uploads the content to S3 first, then constructs an
-`S3Ref`. For small content (< 1 MB): inline as `RawRecord.payload`.
-
-#### AWS SQS (production S3 events)
-
-The config already supports SQS-driven S3 events:
-
-```python
-# config.py
-sqs_queue_url: str = ""
-s3_source: str = "auto"  # auto | minio | sqs | poll
-
-def resolved_source(self) -> str:
-    if self.s3_endpoint_url: return "minio"
-    if self.sqs_queue_url: return "sqs"
-    return "poll"
-```
-
-Set `SQS_QUEUE_URL` in `.env` to switch from MinIO to real SQS-driven S3 events.
+- **Other object stores / SQS-driven S3:** config already supports `SQS_QUEUE_URL` and
+  `s3_source = auto | minio | sqs | poll` (`resolved_source()`); a queue consumer calls
+  `start_ingest` per message.
+- **RDBMS / CDC (Debezium, etc.):** a small consumer receives change events and calls
+  `start_ingest`. For inline row content (no object to fetch), extend the contract with a
+  `payload` and add a branch in `fetch_and_stage_chunks` to use it instead of an S3 GET.
+- **Existing Atlas data (change stream):** an Atlas trigger or a watcher process calls the
+  `/ingest-event` endpoint (or `start_ingest`) per change.
+- **Webhook / HTTP (Notion, GitHub, …):** POST to `trigger_api`; large payloads upload to S3
+  first and construct an `S3Ref`, small ones inline.
 
 ### Multi-source worker scaling
 
-The Temporal worker is stateless. Scale horizontally by running additional worker processes
-pointing at the same task queue:
+The Temporal worker is stateless. Scale horizontally by running more worker processes on the same
+task queue; Temporal distributes workflow and activity tasks across them automatically. Per-worker
+concurrency is `ThreadPoolExecutor(max_workers=16)` — tune to the embedding API rate limit.
 
 ```bash
-# Start N additional workers (each handles IngestWorkflow + BackfillWorkflow)
 uv run python -m pipeline.worker &   # worker 1
-uv run python -m pipeline.worker &   # worker 2
 uv run python -m pipeline.worker &   # worker N
 ```
-
-Temporal distributes workflow tasks across all available workers automatically. Per-worker
-concurrency is set by `ThreadPoolExecutor(max_workers=16)` in `worker.py` — tune to the
-embedding API rate limit.
 
 ---
 
 ## 14. Scaling to multiple data types
 
-The extractor factory (`pipeline/extractors/factory.py`) is the sole extension point for new
-file or data types. The workflow and all activities are type-agnostic — they receive `bytes` and
-call `get_extractor(key, content_type).chunk(body)`.
+The extractor factory (`pipeline/extractors/factory.py`) is the sole extension point for new file
+or data types. Workflows and activities are type-agnostic — they receive `bytes` and call
+`get_extractor(key, content_type).chunk(body)`.
 
 ### Adding a new extractor
 
-1. Create `pipeline/extractors/my_format.py`:
+1. Create `pipeline/extractors/my_format.py` subclassing `Extractor`, implementing `pieces()`.
+2. Register it in `factory.py` (`_BY_EXT["myext"] = MyFormatExtractor`, and/or `_BY_MIME[...]`).
+3. No changes to workflows, activities, or the Atlas data model.
 
-```python
-from .base import Extractor, RawChunk, window
-
-class MyFormatExtractor(Extractor):
-    name = "my_format"
-
-    def pieces(self, body: bytes) -> list[tuple[str, dict]]:
-        # Parse body, return list of (text_segment, metadata_dict)
-        results = []
-        for section in parse_my_format(body):
-            for window_text in window(section.text, self.chunk_size, self.chunk_overlap):
-                results.append((window_text, {"section": section.title}))
-        return results
-```
-
-2. Register in `pipeline/extractors/factory.py`:
-
-```python
-from .my_format import MyFormatExtractor
-
-_BY_EXT["myext"] = MyFormatExtractor
-_BY_MIME["application/x-my-format"] = MyFormatExtractor
-```
-
-3. No changes required to workflows, activities, or the Atlas data model.
-
-### Current extractors and their chunking strategies
+### Current extractors
 
 | Extractor           | `pieces()` strategy                                          | Metadata emitted       |
 | ------------------- | ------------------------------------------------------------ | ---------------------- |
@@ -763,23 +638,17 @@ _BY_MIME["application/x-my-format"] = MyFormatExtractor
 
 ### Planned extractor extensions
 
-| Format                     | Notes                                                                  |
-| -------------------------- | ---------------------------------------------------------------------- |
-| `JsonExtractor`            | Flatten nested JSON; embed per top-level object or configurable depth  |
-| `HtmlExtractor`            | Strip tags, split on semantic blocks (`<article>`, `<section>`, `<p>`) |
-| `DocxExtractor`            | python-docx paragraph extraction                                       |
-| `XlsxExtractor`            | openpyxl sheet-to-row-group batching                                   |
-| `AudioTranscriptExtractor` | Accept a transcript JSON (from Whisper/AWS Transcribe); treat as text  |
-| `SqlResultExtractor`       | Accept a JSON array of rows from an RDBMS query; one chunk per N rows  |
+`JsonExtractor`, `HtmlExtractor`, `DocxExtractor`, `XlsxExtractor`, `AudioTranscriptExtractor`,
+`SqlResultExtractor` — each is one new class, no pipeline changes.
 
 ### Chunking parameter tuning
 
-| Use case                             | Recommended `CHUNK_SIZE` | Recommended `CHUNK_OVERLAP`     |
-| ------------------------------------ | ------------------------ | ------------------------------- |
-| Long narrative docs (PDF, markdown)  | 1200                     | 150                             |
-| Short structured records (CSV, JSON) | 512                      | 64                              |
-| Code files                           | 800                      | 200 (preserve function context) |
-| IoT telemetry batches                | 400                      | 0 (batches are atomic)          |
+| Use case                             | `CHUNK_SIZE` | `CHUNK_OVERLAP`                 |
+| ------------------------------------ | ------------ | ------------------------------- |
+| Long narrative docs (PDF, markdown)  | 1200         | 150                             |
+| Short structured records (CSV, JSON) | 512          | 64                              |
+| Code files                           | 800          | 200 (preserve function context) |
+| IoT telemetry batches                | 400          | 0 (batches are atomic)          |
 
 ---
 
@@ -787,38 +656,31 @@ _BY_MIME["application/x-my-format"] = MyFormatExtractor
 
 ### Multi-tenant / multi-database
 
-Route different sources to different Atlas databases or collections by parameterizing
-`IngestWorkflow(ref, target_collection="customer_a_knowledge")`. The `target_collection`
-argument threads through all three activities. The agent reads the active collection from
-`temporal_config` — point it at the tenant-specific collection.
+Parameterize `IngestWorkflow(ref, target_collection="customer_a_knowledge")`; the argument
+threads through all three activities. Point the agent's active pointer at the tenant collection.
 
 ### Parallel ingestion
 
-Fan out multiple `IngestWorkflow` starts in a parent workflow or from the trigger layer:
+Fan out multiple `IngestWorkflow` starts (each is independent, operating on disjoint `doc_id`s):
 
 ```python
-# Start all refs from a batch event concurrently
 await asyncio.gather(*[start_ingest(client, ref) for ref in refs])
 ```
 
-Each `IngestWorkflow` instance is independent — they share the same `chunks_staging` and
-`knowledge` collections but operate on disjoint `doc_id` namespaces.
-
 ### Incremental sync (change-driven dedupe)
 
-The content-hash check in `fetch_and_stage_chunks` provides built-in incremental sync:
+The content-hash check in `fetch_and_stage_chunks` gives built-in incremental sync:
 
-- Same key, same content → `status: unchanged`, workflow returns immediately, no embedding call.
-- Same key, new content → full re-embed, `index_document` updates in place and prunes stale chunks.
+- Same key, same content → `status: unchanged`, returns immediately, no embedding call.
+- Same key, new content → re-embed; `index_document` updates in place and prunes stale chunks.
 - New key → full ingest.
 
-For RDBMS sources, hash the serialized row JSON as the `doc_content_hash` to get the same
-behaviour for database row updates.
+### Scheduled reconciliation / full re-sync
 
-### Scheduled full re-sync
-
-Use a Temporal scheduled workflow (cron) to poll a source and submit `IngestWorkflow` for each
-object, relying on the content-hash dedupe to skip unchanged documents:
+Because the object store (S3) is the source of truth, a **Temporal Scheduled Workflow** can list
+the bucket and start `IngestWorkflow` for each key, relying on content-hash dedupe to skip
+unchanged docs. This is also the backstop for a dropped source-event notification (the one
+best-effort hop, on par with any broker-based design — see ADR 0001 "Delivery semantics"):
 
 ```python
 @workflow.defn
@@ -834,12 +696,11 @@ class FullSyncWorkflow:
 
 ### Model A/B testing
 
-Run `BackfillWorkflow` into a third collection (`knowledge_v3`) with a different model. Point
-a shadow agent at `knowledge_v3` without cutting over production, compare retrieval quality,
-then cut over when satisfied.
+Run `BackfillWorkflow` into a third collection with a different model; point a shadow agent at it
+and compare retrieval quality before cutting over.
 
 ### Observability hooks
 
-Each activity emits structured log lines via `activity.logger`. Add a MongoDB sink to
-Temporal's visibility store (or use Temporal Cloud's built-in search) to query workflow status
-by `source_uri`, `doc_id`, or `extractor`.
+Each activity emits structured logs via `activity.logger`; the durable agent's every tool/model
+call is workflow history. Query Temporal visibility (or Temporal Cloud search) by `source_uri`,
+`doc_id`, or workflow id.

@@ -33,7 +33,6 @@ help: ## Show this help
 		| sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 	@echo
 	@echo "One-shot:   make start   (infra + temporal + worker + trigger-api + agent-api)"
-	@echo "Kafka demo: make kafka-up (opt-in MongoDB Sink Connector path; then make trigger-listen)"
 	@echo "Then:       make index (once) ; make seed ; make agent-ui"
 	@echo "Teardown:   make stop"
 
@@ -46,7 +45,7 @@ install: ## Install Python deps with uv
 	uv sync
 
 .env: ## Create .env from the example if missing
-	@test -f .env || (cp .env.example .env && echo "created .env — fill in MONGODB_URI, VOYAGE_API_KEY, ANTHROPIC_API_KEY")
+	@test -f .env || (cp .env.example .env && echo "created .env — fill in MONGODB_URI, VOYAGE_API_KEY, OPENAI_API_KEY")
 
 .PHONY: check-env
 check-env: .env
@@ -60,7 +59,7 @@ setup: check-env install ## Setup Python deps and UI (npm install)
 	@echo "setup complete. Run 'make start' to start all services."
 
 # ---------------------------------------------------------------------------
-# Infra (Confluent Kafka + Kafka Connect + MinIO)
+# Infra (MinIO)
 # ---------------------------------------------------------------------------
 
 # --wait only covers long-running services; the *-setup containers are one-shot (exit 0),
@@ -70,29 +69,17 @@ infra-up: .env ## Start MinIO (default local ingress: MinIO webhook -> trigger_a
 	@$(COMPOSE) up -d --wait minio
 	@$(COMPOSE) up -d minio-setup
 
-.PHONY: kafka-up
-kafka-up: .env ## Opt-in showcase: start Kafka + Connect, wire the Kafka bucket event, register the sink
-	@$(COMPOSE) --profile kafka up -d --wait kafka connect
-	@$(COMPOSE) --profile kafka up -d minio-setup-kafka
-	@echo "registering MongoDB sink connector..."
-	@$(PY) -m infra.register_connector
-
 .PHONY: infra-down
 infra-down: ## Stop infra containers (keep volumes)
 	$(COMPOSE) down
 
 .PHONY: infra-clean
-infra-clean: ## Stop infra and wipe volumes (Kafka + MinIO data)
+infra-clean: ## Stop infra and wipe volumes (MinIO data)
 	$(COMPOSE) down -v
 
 .PHONY: infra-logs
 infra-logs: ## Tail infra container logs
 	$(COMPOSE) logs -f
-
-.PHONY: connector-status
-connector-status: ## Show the MongoDB sink connector status
-	@curl -s $(shell grep -E '^KAFKA_CONNECT_URL=' .env | cut -d= -f2 | sed 's/^$$/http:\/\/localhost:8083/')/connectors/mongo-sink/status | python3 -m json.tool || \
-		curl -s http://localhost:8083/connectors/mongo-sink/status | python3 -m json.tool
 
 .PHONY: index
 index: check-env ## Create Atlas Vector Search index on the active collection
@@ -110,12 +97,8 @@ temporal: ## Run the Temporal dev server (foreground; Web UI :8233)
 worker: check-env ## Run the Temporal worker (foreground)
 	$(PY) -m pipeline.worker
 
-.PHONY: trigger-listen
-trigger-listen: check-env ## Dev shim: watch sources change stream -> start IngestWorkflow
-	$(PY) -m pipeline.trigger_listener
-
 .PHONY: trigger-api
-trigger-api: check-env ## Run the trigger HTTP endpoint (MinIO webhook /ingest-event + ASP /ingest-trigger)
+trigger-api: check-env ## Run the trigger HTTP endpoint (MinIO webhook -> /ingest-event; manual /ingest-trigger)
 	$(PY) -m pipeline.trigger_api
 
 .PHONY: agent-api
@@ -170,10 +153,10 @@ stop: stop-app ## Stop background app processes, Temporal, and infra
 
 .PHONY: stop-app
 stop-app: ## Stop worker + trigger-api + agent-api + agent-ui (leaves Temporal + infra up)
-	@-for pat in pipeline.worker pipeline.trigger_api pipeline.trigger_listener agent.api "agent/ui.*vite"; do \
+	@-for pat in pipeline.worker pipeline.trigger_api agent.api "agent/ui.*vite"; do \
 		pkill -f "$$pat" 2>/dev/null && echo "stopped $$pat" || true; \
 	done
-	@-for p in worker trigger-api trigger-listener agent-api agent-ui; do \
+	@-for p in worker trigger-api agent-api agent-ui; do \
 		if [ -f $(LOGDIR)/$$p.pid ]; then kill $$(cat $(LOGDIR)/$$p.pid) 2>/dev/null || true; rm -f $(LOGDIR)/$$p.pid; fi; \
 	done
 

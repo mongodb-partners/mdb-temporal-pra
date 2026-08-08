@@ -19,8 +19,8 @@ _SAMPLE = """# Temporal x MongoDB PRA — sample document
 
 This file was uploaded to S3 to trigger the Part 1 pipeline end to end:
 
-    S3 upload -> event -> Kafka raw -> Temporal ChunkWorkflow -> chunks topic
-              -> EmbedWriteWorkflow -> Voyage embeddings -> MongoDB Atlas.
+    S3 upload -> object-created event -> (MinIO webhook / AWS Lambda) -> Temporal IngestWorkflow
+              -> chunk -> Voyage embeddings -> MongoDB Atlas vector search.
 
 Temporal owns orchestration, retries, checkpointing and resumability. MongoDB Atlas is
 the single source of truth for the knowledge base, the vector index, and agent memory.

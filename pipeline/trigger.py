@@ -1,8 +1,8 @@
 """Shared trigger logic: start an IngestWorkflow for an S3 object.
 
-Used by both the ASP HTTP endpoint (`trigger_api`) and the local change-stream shim
-(`trigger_listener`). Re-uploads terminate any in-flight ingest for the same doc and
-start fresh, so the search index is updated in place rather than duplicated.
+Used by the webhook endpoint (`trigger_api`) and the AWS Lambda (`lambda_handler`).
+Re-uploads terminate any in-flight ingest for the same doc and start fresh, so the search
+index is updated in place rather than duplicated.
 """
 
 from __future__ import annotations
@@ -24,10 +24,9 @@ async def get_client() -> Client:
 async def handle_s3_event(client: Client, event: dict | str | bytes) -> list[str]:
     """Parse an S3/MinIO ObjectCreated event and start an IngestWorkflow per object.
 
-    The single source-agnostic entrypoint shared by every trigger adapter — the local
-    webhook (`trigger_api`), the AWS Lambda (`lambda_handler`), and the change-stream
-    shim (`trigger_listener`). Returns the started workflow ids (empty for a non-object
-    event such as MinIO's `s3:TestEvent`).
+    The single source-agnostic entrypoint shared by the trigger adapters — the local webhook
+    (`trigger_api`) and the AWS Lambda (`lambda_handler`). Returns the started workflow ids
+    (empty for a non-object event such as MinIO's `s3:TestEvent`).
     """
     return [await start_ingest(client, ref) for ref in refs_from_s3_event(event)]
 

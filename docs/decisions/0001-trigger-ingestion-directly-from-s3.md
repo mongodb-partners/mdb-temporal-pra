@@ -44,9 +44,10 @@ reusing the existing `start_ingest` seam (`pipeline/trigger.py`). Concretely:
 - Production (AWS S3): S3 Event Notification -> Lambda/EventBridge ->
   `start_workflow("IngestWorkflow", S3Ref(bucket, key))`.
 
-Retain the Kafka/`sources`/ASP chain only when its distinct value is actually needed:
-a genuine multi-source fan-in, or an explicit goal of demonstrating the MongoDB
-Sink Connector + Change Streams + Stream Processing products.
+The Kafka/`sources`/ASP chain is removed entirely — the webhook (local) / Lambda (prod)
+direct trigger is the only ingestion path. (An earlier revision kept Kafka behind an opt-in
+for the MongoDB-connector showcase; that was dropped to keep the architecture minimal. A
+future multi-source fan-in could reintroduce a broker if genuinely needed.)
 
 ## Delivery semantics
 
@@ -58,14 +59,15 @@ Getting an S3 event to `start_workflow`:
 
 - AWS S3 has exactly four native notification destinations -- SQS, SNS, Lambda,
   EventBridge (one per config; all at-least-once). There is NO native S3 -> Kafka
-  destination. MinIO can emit to Kafka natively (which is why the local demo does
-  S3 -> Kafka); real S3 cannot, so a production Kafka path still needs
-  S3 -> SQS/EventBridge/Lambda -> Kafka -- i.e. Kafka sits downstream of a queue that
-  already provides at-least-once.
-- The durable at-least-once buffer is the queue (Kafka today; SQS/EventBridge in the
-  direct design). Temporal provides idempotency, not delivery: the deterministic
-  workflow id `ingest-<sha1(uri)>` collapses duplicate deliveries onto one workflow.
-  So: at-least-once transport + idempotent workflow id = effectively-once processing.
+  destination: MinIO can emit to Kafka natively, but real S3 cannot, so any Kafka-based
+  path would still need S3 -> SQS/EventBridge/Lambda -> Kafka -- i.e. Kafka would sit
+  downstream of a queue that already provides at-least-once. (This is part of why the
+  Kafka path was dropped.)
+- The durable at-least-once buffer is the queue in front of `start_workflow`
+  (SQS/EventBridge in prod; MinIO's `queue_dir`-backed webhook locally). Temporal provides
+  idempotency, not delivery: the deterministic workflow id `ingest-<sha1(uri)>` collapses
+  duplicate deliveries onto one workflow. So: at-least-once transport + idempotent workflow
+  id = effectively-once processing.
 
 Failure handling:
 
@@ -81,9 +83,10 @@ Failure handling:
   destination: if the destination is unavailable beyond S3's short internal retry, the
   notification is lost. (Lambda is partly cushioned -- throttles and concurrency
   limits are retried by Lambda's async queue for up to 6h once the event is accepted,
-  so only a true Lambda service outage reduces to short-retry-then-drop.) This
-  weakness is upstream of Kafka and Kafka does not fix it; the current local
-  MinIO -> Kafka path has it unmitigated (no `queue_dir`).
+  so only a true Lambda service outage reduces to short-retry-then-drop.) A Kafka-based
+  path would not fix this — the weakness is upstream of Kafka. Locally, MinIO's `queue_dir`
+  buffers undelivered webhook events (a source-side mitigation real S3 lacks); the
+  reconciliation sweep is the general fix.
 
 Mitigations (architecture-independent -- both designs need them):
 
@@ -118,10 +121,9 @@ Positive:
   and unchanged.
 
 Negative / trade-offs:
-- Removing the connector chain would stop demonstrating three MongoDB *integration*
-  features (Sink Connector, Change Streams, Stream Processing). Because that demo is a
-  goal of this partner artifact, the implementation *retains* the Kafka path as an
-  opt-in (`make kafka-up`) rather than deleting it — see Implementation.
+- Removing the connector chain stops demonstrating three MongoDB *integration* features
+  (Sink Connector, Change Streams, Stream Processing) in this repo. Accepted as a deliberate
+  trade for a minimal architecture; those products can be showcased separately.
 - Loses the single source-agnostic fan-in boundary; each new source type would wire
   its own trigger (which the LLD already does for webhooks/CDC).
 
@@ -136,8 +138,8 @@ Negative / trade-offs:
 
 ## Implementation
 
-Implemented with the webhook path as the **default** local trigger and the Kafka chain
-**retained opt-in**, so the MongoDB-connector showcase still runs:
+Implemented with the webhook path (local) / Lambda (prod) as the **only** trigger; the Kafka /
+Sink Connector / `sources` / ASP chain has been **removed entirely**:
 
 - Shared core `handle_s3_event(client, event)` in `pipeline/trigger.py` wraps the existing
   `refs_from_s3_event` + `start_ingest`. Two thin adapters call it: `POST /ingest-event`
@@ -146,11 +148,13 @@ Implemented with the webhook path as the **default** local trigger and the Kafka
 - Local default: MinIO's `webhook` notify target (with `queue_dir` for at-least-once) POSTs
   each ObjectCreated event to `trigger_api` at `host.docker.internal:8088/ingest-event`.
   `make start` runs `trigger_api`; `make infra-up` starts only MinIO.
-- Opt-in showcase: `make kafka-up` (compose `kafka` profile) starts Kafka + Connect, adds the
-  Kafka bucket subscription, and registers the sink connector; the `sources` change-stream
-  listener (`make trigger-listen`) still works. The deterministic workflow id makes a
-  concurrent webhook + Kafka trigger a harmless no-op.
+- Removed: the `kafka` / `connect` compose services, `infra/register_connector.py`,
+  `infra/connectors/mongo-sink.json`, `infra/asp/`, `pipeline/trigger_listener.py`, the
+  `sources` collection, and the `make kafka-up` / `trigger-listen` targets.
 - Tests: `tests/test_handle_s3_event.py` asserts a MinIO event and an AWS event produce the
   identical `start_workflow` call (the "same code both places" guarantee).
-- Follow-ups: deploying the Lambda (packaging, Temporal Cloud mTLS, VPC egress) and the
-  reconciliation sweep from Delivery semantics.
+- Follow-ups: deploying the Lambda (packaging, Temporal Cloud mTLS, VPC egress) and a
+  reconciliation sweep (S3 Inventory / ListObjects diffed against `knowledge`). Note the
+  reconciliation gap lives in the S3 eventing layer, not in this design — it is on par with a
+  Kafka-based approach, which ingests S3 events through the same best-effort S3-notification
+  hop, so removing Kafka neither introduces nor worsens it.

@@ -8,7 +8,6 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/research": "http://localhost:8090",
-      "/query": "http://localhost:8090",
       "/health": "http://localhost:8090",
     },
   },
