@@ -22,7 +22,7 @@ _EMBED_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=2),
     backoff_coefficient=2.0,
     maximum_interval=timedelta(seconds=30),
-    maximum_attempts=6,
+    maximum_attempts=0,
 )
 
 # Embed up to this many chunks concurrently per wave (bounded fan-out).
