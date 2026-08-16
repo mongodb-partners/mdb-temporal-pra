@@ -22,6 +22,34 @@ def _staging():
     return mongo_client()[settings.mongodb_db][settings.chunks_collection]
 
 
+def _is_fully_indexed(know, doc_id: str, doc_hash: str) -> bool:
+    """True only when *every* chunk of this doc is present at this exact content hash.
+
+    An existence check is not enough. index_document upserts chunk-by-chunk with no
+    transaction, so a crash mid-loop leaves a subset of chunks already stamped with the
+    new hash — enough to satisfy "does any chunk match?" while the rest of the document
+    is missing. Unchanged bytes hash the same on every retry, so the document would stay
+    half-indexed forever while each ingest reported success.
+
+    Each indexed chunk therefore records how many chunks the document has
+    (``doc_chunk_count``), and a document counts as complete only when the number of
+    chunks carrying this hash *and* declaring that count equals the total stored for the
+    doc. That also catches a crash between the last upsert and the stale-chunk prune:
+    leftovers from a longer previous version still carry the old hash, so the totals
+    disagree and the document is re-staged.
+
+    Chunks written before ``doc_chunk_count`` existed have no count to match, so those
+    documents are re-ingested once and self-heal.
+    """
+    total = know.count_documents({"doc_id": doc_id})
+    if not total:
+        return False
+    complete = know.count_documents(
+        {"doc_id": doc_id, "doc_content_hash": doc_hash, "doc_chunk_count": total}
+    )
+    return complete == total
+
+
 @activity.defn
 def fetch_and_stage_chunks(ref: S3Ref) -> dict:
     """Stage 1: download, extract+chunk by file type, persist chunks to MDB (batched)."""
@@ -32,8 +60,8 @@ def fetch_and_stage_chunks(ref: S3Ref) -> dict:
     doc_id = doc_id_for_uri(ref.s3_uri)
     doc_hash = sha256_hex(body)
 
-    # Short-circuit: this exact version is already indexed.
-    if knowledge_collection().find_one({"doc_id": doc_id, "doc_content_hash": doc_hash}, {"_id": 1}):
+    # Short-circuit: this exact version is already indexed, in full.
+    if _is_fully_indexed(knowledge_collection(), doc_id, doc_hash):
         return {"doc_id": doc_id, "doc_hash": doc_hash, "n": 0, "status": "unchanged"}
 
     extractor = get_extractor(ref.key, content_type)
@@ -105,6 +133,9 @@ def index_document(doc_id: str, doc_hash: str, target_collection: str | None = N
                 "text": c["text"],
                 "content_hash": c["content_hash"],
                 "doc_content_hash": doc_hash,
+                # How many chunks this doc should have — lets the stage-1 short-circuit
+                # tell a complete document from a half-written one (see _is_fully_indexed).
+                "doc_chunk_count": n,
                 "embedding": c["embedding"],
                 "model": c["model"],
                 "dim": c["dim"],

@@ -50,6 +50,9 @@ class FakeCollection:
     def find(self, query: dict | None = None) -> FakeCursor:
         return FakeCursor([d for d in self.docs if _matches(d, query or {})])
 
+    def count_documents(self, query: dict) -> int:
+        return sum(1 for d in self.docs if _matches(d, query))
+
     def insert_many(self, docs: list[dict]) -> None:
         self.docs.extend(dict(d) for d in docs)
 
@@ -183,4 +186,54 @@ def test_reingest_after_partial_index_restages_all_chunks(wiring, ref):
         f"half-indexed doc reported as {result['status']!r} — the remaining "
         f"{N_CHUNKS - 2} chunks will never be indexed"
     )
+    assert result["n"] == N_CHUNKS
+
+
+def test_fully_indexed_doc_is_still_reported_unchanged(wiring, ref):
+    """The completeness check must not cost us the short-circuit it replaces.
+
+    Guards against "fix" the bug by never short-circuiting: a document that really did
+    finish indexing must still skip re-staging and re-embedding.
+    """
+    know, staging = wiring
+    doc_id, doc_hash = doc_id_for_uri(ref.s3_uri), sha256_hex(BODY)
+    _stage_embedded(staging, doc_id, doc_hash)
+    ingest.index_document(doc_id, doc_hash)  # completes; staging is cleared
+
+    result = ingest.fetch_and_stage_chunks(ref)
+
+    assert result["status"] == "unchanged"
+    assert result["n"] == 0
+    assert not staging.docs, "an unchanged doc must not be re-staged"
+
+
+def test_reingest_restages_when_stale_chunks_survived_the_prune(wiring, ref):
+    """A crash between the last upsert and the stale-chunk prune is also incomplete.
+
+    All N_CHUNKS chunks carry the new hash, but leftovers from a longer previous version
+    were never pruned, so the doc is not in the state a finished index_document produces.
+    """
+    know, staging = wiring
+    doc_id, doc_hash = doc_id_for_uri(ref.s3_uri), sha256_hex(BODY)
+
+    for i in range(N_CHUNKS):
+        know.insert_one({
+            "doc_id": doc_id,
+            "chunk_id": f"{doc_id}:{i}",
+            "ordinal": i,
+            "doc_content_hash": doc_hash,
+            "doc_chunk_count": N_CHUNKS,
+        })
+    for i in (N_CHUNKS, N_CHUNKS + 1):  # tail of the older, longer version
+        know.insert_one({
+            "doc_id": doc_id,
+            "chunk_id": f"{doc_id}:{i}",
+            "ordinal": i,
+            "doc_content_hash": "older-hash",
+            "doc_chunk_count": N_CHUNKS + 2,
+        })
+
+    result = ingest.fetch_and_stage_chunks(ref)
+
+    assert result["status"] == "staged", "stale chunks left searchable — the prune never ran"
     assert result["n"] == N_CHUNKS
