@@ -48,6 +48,9 @@ def reembed_and_write(doc: dict[str, Any], model: str, target_collection: str) -
             "text": doc["text"],
             "content_hash": doc.get("content_hash", ""),
             "doc_content_hash": doc.get("doc_content_hash", ""),
+            # Carried over so the green collection keeps the completeness signal that
+            # fetch_and_stage_chunks reads; dropping it would re-ingest every doc after cutover.
+            "doc_chunk_count": doc.get("doc_chunk_count"),
             "embedding": list(vector),
             "model": model,
             "dim": len(vector),
