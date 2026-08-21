@@ -41,7 +41,7 @@ This PRA packages the pattern that removes that pain.
 
 ### High-level design
 
-![High-level architecture — Sources → Kafka → Temporal → Atlas → Deep Agent → User](/docs/images/MonogDB-Temporal-Kafka-ingestion.png)
+![High-level architecture — Sources → Kafka → Temporal → Atlas → Deep Agent → User](/docs/images/MonogDB-Temporal-Kafka-ingestion.svg)
 
 **How to read it:**
 
