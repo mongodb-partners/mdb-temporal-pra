@@ -43,7 +43,7 @@ This PRA packages the pattern that removes that pain — already in production a
 
 ### High-level design
 
-![High-level architecture — Sources → Kafka → Temporal → Atlas → Deep Agent → User](docs/images/mongodb-temporal-hld-directtotemporal.png)
+![High-level architecture — Sources → Kafka → Temporal → Atlas → Deep Agent → User](docs/images/mongodb-temporal-hld-directtotemporal.svg)
 
 Temporal is used to bring durability to both the content ingestion pipeline and to the agent that leverages the ingested content.
 
