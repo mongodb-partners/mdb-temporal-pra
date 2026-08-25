@@ -14,6 +14,9 @@ from temporalio.client import Client
 from temporalio.contrib.openai_agents import ModelActivityParameters, OpenAIAgentsPlugin
 from temporalio.worker import Worker
 
+from agents import OpenAIProvider
+from openai import AsyncOpenAI
+
 from agent.agent_workflow import DeepResearchAgent
 from agent.tools import rerank_tool, vector_search_tool
 
@@ -31,11 +34,31 @@ async def main() -> None:
     agent_activities: list = []
     if settings.openai_api_key:
         os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
+
+        extra_headers: dict = {}
+        if settings.openai_subscription_key:
+            extra_headers[settings.openai_subscription_key_header] = settings.openai_subscription_key
+
+        openai_client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url or None,
+            default_headers=extra_headers or None,
+            max_retries=0,
+        )
+        model_provider = OpenAIProvider(openai_client=openai_client)
+
+        if settings.openai_base_url:
+            print(
+                f"[worker] OpenAI config: base_url={settings.openai_base_url}"
+                + (f", subscription_header={settings.openai_subscription_key_header}" if settings.openai_subscription_key else "")
+            )
+
         plugins.append(
             OpenAIAgentsPlugin(
+                model_provider=model_provider,
                 model_params=ModelActivityParameters(
                     start_to_close_timeout=timedelta(seconds=60)
-                )
+                ),
             )
         )
         agent_workflows = [DeepResearchAgent]

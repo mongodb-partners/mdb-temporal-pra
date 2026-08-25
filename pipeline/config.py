@@ -66,6 +66,9 @@ class Settings(BaseSettings):
 
     # ---- OpenAI (durable research agent — OpenAI Agents SDK on Temporal) ----
     openai_api_key: str = ""
+    openai_base_url: str = ""  # override to use a custom gateway (e.g. Azure APIM proxy)
+    openai_subscription_key: str = ""
+    openai_subscription_key_header: str = "api-key"  # header name the gateway expects
     agent_model: str = "gpt-4.1"  # OpenAI model for the agent loop; adjust to a current one
     agent_max_turns: int = 8  # guardrail on the tool-use loop
 
