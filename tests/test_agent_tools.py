@@ -47,7 +47,6 @@ def test_rerank_tool_loads_text_and_orders(monkeypatch):
         {"chunk_id": "d:0", "source_uri": "s3://b/a.md", "text": "alpha"},
         {"chunk_id": "d:1", "source_uri": "s3://b/a.md", "text": "beta"},
     ]
-    monkeypatch.setattr(tools, "get_active", lambda: {"active_collection": "knowledge"})
     monkeypatch.setattr(tools, "knowledge_collection", lambda name=None: _FakeColl(docs))
     fake_voyage = _FakeVoyage(ordered=[(1, 0.95), (0, 0.40)])  # reranks d:1 above d:0
     monkeypatch.setattr(tools, "voyage_client", lambda: fake_voyage)

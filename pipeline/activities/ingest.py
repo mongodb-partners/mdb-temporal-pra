@@ -2,20 +2,19 @@
 
 Stages (each a distinct activity, so the workflow is resumable):
   1. fetch_and_stage_chunks  — download S3 object, factory-extract+chunk, stage in MDB
-  2. embed_staged_chunk      — embed one staged chunk via Voyage (one call per chunk)
-  3. index_document          — upsert embedded chunks into the searchable collection,
-                               prune stale chunks (update-in-place), ensure the index
+  2. index_document          — upsert staged chunks into knowledge_auto_embedding;
+                               Atlas auto-embedding generates vectors asynchronously
 """
 
 from __future__ import annotations
 
 from temporalio import activity
 
-from ..clients import knowledge_collection, mongo_client, s3_client, voyage_client
+from ..clients import knowledge_collection, mongo_client, s3_client
 from ..config import settings
 from ..extractors import get_extractor
 from ..models import S3Ref, doc_id_for_uri, sha256_hex
-from ..search_index import ensure_vector_index
+from ..search_index import ensure_auto_embedding_index
 
 
 def _staging():
@@ -55,7 +54,6 @@ def fetch_and_stage_chunks(ref: S3Ref) -> dict:
                     "metadata": r.meta,
                     "extractor": extractor.name,
                     "status": "pending",
-                    "embedding": None,
                 }
                 for r in raws
             ]
@@ -65,35 +63,17 @@ def fetch_and_stage_chunks(ref: S3Ref) -> dict:
 
 
 @activity.defn
-def embed_staged_chunk(chunk_id: str, model: str | None = None) -> str:
-    """Stage 2: embed one staged chunk (idempotent — skips if already embedded with this model)."""
-    use_model = model or settings.voyage_model
-    staging = _staging()
-    doc = staging.find_one({"chunk_id": chunk_id})
-    if doc is None:
-        raise ValueError(f"staged chunk not found: {chunk_id}")
-    if doc.get("status") == "embedded" and doc.get("model") == use_model:
-        return chunk_id  # already done (resume)
+def index_document(doc_id: str, doc_hash: str) -> dict:
+    """Stage 2: upsert staged chunks into knowledge_auto_embedding (no embedding needed).
 
-    activity.heartbeat(chunk_id)
-    vector = voyage_client().embed([doc["text"]], model=use_model, input_type="document").embeddings[0]
-    staging.update_one(
-        {"chunk_id": chunk_id},
-        {"$set": {"embedding": list(vector), "model": use_model, "dim": len(vector), "status": "embedded"}},
-    )
-    return chunk_id
-
-
-@activity.defn
-def index_document(doc_id: str, doc_hash: str, target_collection: str | None = None) -> dict:
-    """Stage 3: upsert embedded chunks into the searchable collection; update in place."""
-    coll_name = target_collection or settings.knowledge_collection
-    know = knowledge_collection(coll_name)
+    Atlas auto-embedding generates vectors asynchronously once documents land in the
+    collection. The ``text`` field is indexed by the autoEmbed Atlas Search index.
+    """
+    know = knowledge_collection()
     staging = _staging()
 
-    chunks = list(staging.find({"doc_id": doc_id, "status": "embedded"}).sort("ordinal", 1))
+    chunks = list(staging.find({"doc_id": doc_id, "status": "pending"}).sort("ordinal", 1))
     n = len(chunks)
-    dim = chunks[0]["dim"] if chunks else settings.embed_dim
 
     for c in chunks:
         know.update_one(
@@ -105,9 +85,6 @@ def index_document(doc_id: str, doc_hash: str, target_collection: str | None = N
                 "text": c["text"],
                 "content_hash": c["content_hash"],
                 "doc_content_hash": doc_hash,
-                "embedding": c["embedding"],
-                "model": c["model"],
-                "dim": c["dim"],
                 "source_uri": c["source_uri"],
                 "metadata": c.get("metadata", {}),
             }},
@@ -117,8 +94,8 @@ def index_document(doc_id: str, doc_hash: str, target_collection: str | None = N
     # Update-in-place: drop chunks from a previous, longer version of this doc.
     know.delete_many({"doc_id": doc_id, "ordinal": {"$gte": n}})
 
-    created = ensure_vector_index(know, settings.vector_search_index_name, dim)
+    ensure_auto_embedding_index(know, settings.auto_embedding_index_name, settings.auto_embedding_model)
     staging.delete_many({"doc_id": doc_id})  # staging is transient
 
-    activity.logger.info("indexed %d chunk(s) into %s (index_created=%s)", n, coll_name, created)
-    return {"doc_id": doc_id, "indexed": n, "collection": coll_name, "index_created": created}
+    activity.logger.info("indexed %d chunk(s) into %s", n, settings.knowledge_auto_embedding_collection)
+    return {"doc_id": doc_id, "indexed": n, "collection": settings.knowledge_auto_embedding_collection}

@@ -45,11 +45,11 @@ async def ensure_index_on_startup() -> None:
         if boot["indexes"]:
             logger.info("Ensured MongoDB indexes at startup: %s", ", ".join(boot["indexes"]))
 
-        created = ensure_atlas_indexes(collection=settings.knowledge_collection)
+        created = ensure_atlas_indexes(collection=settings.knowledge_auto_embedding_collection)
         if created:
             logger.info("Created Atlas Search index at startup: %s", ", ".join(created))
         else:
-            logger.info("Atlas Search index already present for '%s'", settings.knowledge_collection)
+            logger.info("Atlas Search index already present for '%s'", settings.knowledge_auto_embedding_collection)
     except Exception:
         logger.exception("Failed to bootstrap MongoDB collections/indexes on startup")
 

@@ -1,4 +1,4 @@
-"""Idempotent Atlas Vector Search index management (shared by activities + infra)."""
+"""Idempotent Atlas Vector Search index management for auto-embedding."""
 
 from __future__ import annotations
 
@@ -7,21 +7,27 @@ from typing import Any
 from .config import settings
 
 
-def vector_index_definition(dim: int) -> dict[str, Any]:
+def auto_embedding_index_definition(model: str) -> dict[str, Any]:
     return {
         "fields": [
-            {"type": "vector", "path": "embedding", "numDimensions": dim, "similarity": "cosine"},
+            {
+                "type": "autoEmbed",
+                "modality": "text",
+                "path": "text",
+                "model": model,
+            },
             {"type": "filter", "path": "doc_id"},
             {"type": "filter", "path": "source_uri"},
         ]
     }
 
 
-def ensure_vector_index(coll, name: str | None = None, dim: int = 1024) -> bool:
-    """Create the vector search index if absent. Returns True if a creation was issued."""
+def ensure_auto_embedding_index(coll, name: str | None = None, model: str | None = None) -> bool:
+    """Create the auto-embedding vector search index if absent. Returns True if created."""
     from pymongo.operations import SearchIndexModel
 
-    name = name or settings.vector_search_index_name
+    name = name or settings.auto_embedding_index_name
+    model = model or settings.auto_embedding_model
 
     try:
         existing = {ix["name"] for ix in coll.list_search_indexes()}
@@ -31,6 +37,10 @@ def ensure_vector_index(coll, name: str | None = None, dim: int = 1024) -> bool:
         return False
 
     coll.create_search_index(
-        SearchIndexModel(definition=vector_index_definition(dim), name=name, type="vectorSearch")
+        SearchIndexModel(
+            definition=auto_embedding_index_definition(model),
+            name=name,
+            type="vectorSearch",
+        )
     )
     return True

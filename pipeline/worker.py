@@ -28,7 +28,7 @@ from .workflows import ALL_WORKFLOWS
 async def main() -> None:
     # The durable research agent (OpenAI Agents SDK) is opt-in: it loads only when
     # OPENAI_API_KEY is set, because the plugin builds an OpenAI client at worker startup.
-    # Without a key the worker still runs ingestion/backfill exactly as before.
+    # Without a key the worker still runs ingestion exactly as before.
     plugins: list = []
     agent_workflows: list = []
     agent_activities: list = []

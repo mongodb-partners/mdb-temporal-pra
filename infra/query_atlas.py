@@ -1,4 +1,4 @@
-"""Verification helper: $vectorSearch over the active knowledge collection.
+"""Verification helper: $vectorSearch over the knowledge_auto_embedding collection.
 
 Run:  uv run python -m infra.query_atlas "how does resume without re-embed work?"
 """
@@ -7,18 +7,17 @@ from __future__ import annotations
 
 import argparse
 
-from pipeline.config_store import get_active
+from pipeline.config import settings
 from pipeline.retrieval import vector_search
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Vector-search the active knowledge collection.")
+    parser = argparse.ArgumentParser(description="Vector-search the knowledge_auto_embedding collection.")
     parser.add_argument("query", help="Natural-language query.")
     parser.add_argument("--k", type=int, default=5, help="Number of results.")
     args = parser.parse_args()
 
-    active = get_active()
-    print(f"(active: {active['active_collection']} / {active['active_index']} / {active['model']})")
+    print(f"(collection: {settings.knowledge_auto_embedding_collection} / {settings.auto_embedding_index_name})")
 
     results = vector_search(args.query, k=args.k)
     if not results:

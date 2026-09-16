@@ -51,18 +51,16 @@ class Settings(BaseSettings):
     # ---- MongoDB Atlas ----
     mongodb_uri: str = ""
     mongodb_db: str = "temporal"
-    chunks_collection: str = "chunks_staging"     # staged chunks between workflow stages
-    knowledge_collection: str = "knowledge"       # searchable embedded chunks (blue)
-    knowledge_v2_collection: str = "knowledge_v2" # blue/green backfill target (green)
-    config_collection: str = "temporal_config"         # cutover active-pointer doc
-    memory_collection: str = "agent_memory"       # deep-agent write-back
-    vector_search_index_name: str = "temporalai_search_index"
+    chunks_collection: str = "chunks_staging"              # staged chunks between workflow stages
+    knowledge_auto_embedding_collection: str = "knowledge_auto_embedding"  # auto-embedded chunks
+    config_collection: str = "temporal_config"             # active-pointer doc
+    memory_collection: str = "agent_memory"               # deep-agent write-back
+    auto_embedding_index_name: str = "temporalai_auto_embed_index"
+    auto_embedding_model: str = "voyage-4"                 # Voyage model used by Atlas auto-embed
 
-    # ---- Voyage AI ----
+    # ---- Voyage AI (reranking only — embeddings are handled by Atlas auto-embedding) ----
     voyage_api_key: str = ""
-    voyage_model: str = "voyage-3.5"
     voyage_rerank_model: str = "rerank-2.5"
-    embed_dim: int = 1024
 
     # ---- OpenAI (durable research agent — OpenAI Agents SDK on Temporal) ----
     openai_api_key: str = ""

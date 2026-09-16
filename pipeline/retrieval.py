@@ -1,25 +1,22 @@
-"""Shared vector-search over the active (cut-over-aware) knowledge collection."""
+"""Shared vector-search over the knowledge_auto_embedding collection."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from .clients import knowledge_collection, voyage_client
-from .config_store import get_active
+from .clients import knowledge_collection
+from .config import settings
 
 
 def vector_search(query: str, k: int = 5) -> list[dict[str, Any]]:
-    """Embed the query with the active model and $vectorSearch the active collection."""
-    active = get_active()
-    qv = voyage_client().embed([query], model=active["model"], input_type="query").embeddings[0]
-
-    coll = knowledge_collection(active["active_collection"])
+    """Run $vectorSearch using Atlas auto-embedding — no manual embedding step needed."""
+    coll = knowledge_collection()
     results = coll.aggregate([
         {
             "$vectorSearch": {
-                "index": active["active_index"],
-                "path": "embedding",
-                "queryVector": list(qv),
+                "index": settings.auto_embedding_index_name,
+                "path": "text",
+                "query": query,
                 "numCandidates": max(100, k * 20),
                 "limit": k,
             }

@@ -9,13 +9,12 @@ from temporalio import activity
 
 from pipeline.clients import knowledge_collection, voyage_client
 from pipeline.config import settings
-from pipeline.config_store import get_active
 from pipeline.retrieval import vector_search
 
 
 @activity.defn
 def vector_search_tool(query: str, k: int = 10) -> list[dict[str, Any]]:
-    """Semantic vector search over the active knowledge base.
+    """Semantic vector search over the knowledge base using Atlas auto-embedding.
 
     Use this first to find material relevant to the question. Returns up to `k`
     candidate chunks, each with `chunk_id`, `source_uri`, `text`, and a similarity
@@ -43,8 +42,7 @@ def rerank_tool(query: str, chunk_ids: list[str], top_k: int = 5) -> list[dict[s
     if not chunk_ids:
         return []
 
-    active = get_active()
-    coll = knowledge_collection(active["active_collection"])
+    coll = knowledge_collection()
     docs = list(
         coll.find(
             {"chunk_id": {"$in": chunk_ids}},

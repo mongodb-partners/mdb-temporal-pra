@@ -197,13 +197,5 @@ seed-docs: check-env ## Clone/update Temporal docs repo, upload only .md/.mdx fi
 	$(PY) -m pipeline.seed_repo $(if $(REPO_DIR),$(REPO_DIR),) $(if $(REPO_URL),--repo-url $(REPO_URL)) $(if $(CHECKOUT_DIR),--checkout-dir $(CHECKOUT_DIR)) --ref $(REPO_REF) --prefix $(PREFIX) --delay-ms $(DELAY_MS) $(if $(DRY_RUN),--dry-run)
 
 .PHONY: query
-query: check-env ## Vector-search the active collection (Q="your question")
+query: check-env ## Vector-search the knowledge_auto_embedding collection (Q="your question")
 	$(PY) -m infra.query_atlas "$(Q)"
-
-.PHONY: backfill
-backfill: check-env ## Re-embed into knowledge_v2 with a new model (MODEL=voyage-3-large)
-	$(PY) -m pipeline.trigger_backfill --model $(MODEL)
-
-.PHONY: cutover
-cutover: check-env ## Flip the active collection/index to the backfilled set (TO=knowledge_v2)
-	$(PY) -m pipeline.cutover $(if $(TO),--to $(TO))

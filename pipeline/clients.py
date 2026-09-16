@@ -28,12 +28,14 @@ def mongo_client() -> "MongoClient":
 
 
 def knowledge_collection(name: str | None = None):
+    """Return the auto-embedding knowledge collection (or the named override)."""
     db = mongo_client()[settings.mongodb_db]
-    return db[name or settings.knowledge_collection]
+    return db[name or settings.knowledge_auto_embedding_collection]
 
 
 @lru_cache(maxsize=1)
 def voyage_client() -> "voyageai.Client":
+    """Voyage client used *only* for reranking (embeddings are Atlas auto-generated)."""
     import voyageai
 
     if not settings.voyage_api_key:

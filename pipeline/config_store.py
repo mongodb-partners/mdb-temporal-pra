@@ -1,8 +1,8 @@
-"""Cutover pointer: which collection + index + model retrieval should read.
+"""Active collection pointer stored in temporal_config.
 
-A single doc `{_id:'active', active_collection, active_index, model, dim}` in `temporal_config`.
-Backfill writes a new (green) collection; `cutover.py` flips this pointer atomically for
-readers, giving a blue/green swap on embedding-model changes.
+A single doc ``{_id:'active', active_collection, active_index}`` in ``temporal_config``
+tells all readers which collection and index to query. With Atlas auto-embedding there is
+no longer a model/dim concept to track here.
 """
 
 from __future__ import annotations
@@ -20,21 +20,11 @@ def _coll():
 def default_active() -> dict:
     return {
         "_id": _ACTIVE_ID,
-        "active_collection": settings.knowledge_collection,
-        "active_index": settings.vector_search_index_name,
-        "model": settings.voyage_model,
-        "dim": settings.embed_dim,
+        "active_collection": settings.knowledge_auto_embedding_collection,
+        "active_index": settings.auto_embedding_index_name,
     }
 
 
 def get_active() -> dict:
     """Return the active pointer, falling back to defaults if unset."""
     return _coll().find_one({"_id": _ACTIVE_ID}) or default_active()
-
-
-def set_active(collection: str, model: str, dim: int, index: str | None = None) -> dict:
-    index = index or settings.vector_search_index_name
-    doc = {"_id": _ACTIVE_ID, "active_collection": collection, "active_index": index,
-           "model": model, "dim": dim}
-    _coll().replace_one({"_id": _ACTIVE_ID}, doc, upsert=True)
-    return doc
