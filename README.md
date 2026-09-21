@@ -49,7 +49,7 @@ Temporal is used to bring durability to both the content ingestion pipeline and 
 
 **How to read it:**
 
-1. Changes in **Data Soruces** (S3, RDBMS, messaging technologies, etc.) directly
+1. Changes in **Data Sources** (S3, RDBMS, messaging technologies, etc.) directly
    launch workflows running in Temporal
 2. **Temporal** chunks the content, calls **Voyage AI** for embeddings, and upserts into
    **Atlas Search**.

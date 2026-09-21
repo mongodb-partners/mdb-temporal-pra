@@ -55,10 +55,11 @@ node --version
 
 ### Create a database user
 
-1. In the Atlas UI: **Security → Database Access → Add New Database User**.
+1. In the Atlas UI: **Security → Database & Network Access → Add New Database User**.
 2. Choose **Password** auth. Note the username and password.
 3. Grant **Atlas Admin** role (or at minimum `readWriteAnyDatabase`).
 4. Docs: [Configure Database Users](https://www.mongodb.com/docs/atlas/security-add-mongodb-users/)
+*Note:* This might have automatically been created for you if you created a new account. If so, you can skip this step. 
 
 ### Allow network access
 
@@ -67,13 +68,13 @@ Your local machine (the Python worker/trigger processes) and the MinIO container
 - Your **local machine IP** (for Python scripts).
 - **0.0.0.0/0** temporarily while testing, or your NAT public IP for the Docker network.
 
-Steps: **Security → Network Access → Add IP Address**.
+Steps: **Security → Network Access → IP Access List → Add IP Address**.
 
 Docs: [Configure IP Access List](https://www.mongodb.com/docs/atlas/security/ip-access-list/)
 
 ### Get the connection string
 
-1. **Database → Connect → Drivers** → copy the `mongodb+srv://` URI.
+1. **Database → Clusters -> Connect → Drivers** → copy the `mongodb+srv://` URI.
 2. Replace `<username>` and `<password>` with the credentials you created above.
 
 The URI will look like:
@@ -89,8 +90,8 @@ mongodb+srv://myuser:mypass@mycluster.abc12.mongodb.net/?retryWrites=true&w=majo
 Voyage AI is available directly through **MongoDB Atlas Models** — no separate Voyage AI account
 required.
 
-1. In the Atlas UI go to **Services → Atlas Models** (or search "Models" in the left nav).
-2. Select **Voyage AI** from the provider list and click **Generate API Key**.
+1. In the Atlas UI go to **Services → AI Models → Create model API Key**
+2. Give your Model API Key a name - these should be unique
 3. Copy the key — it will only be shown once.
 4. The default model used is `voyage-3.5` (1024 dimensions).
 5. Docs: [Atlas Models — Voyage AI](https://www.mongodb.com/docs/atlas/ai-integrations/)
