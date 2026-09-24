@@ -35,6 +35,15 @@ class S3Ref:
 
 
 @dataclass
+class Span:
+    """A byte range in the unmodified source object. End is exclusive."""
+
+    start: int
+    end: int
+    kind: str = "byte"
+
+
+@dataclass
 class Chunk:
     """One chunk of a document, ready to be embedded."""
 

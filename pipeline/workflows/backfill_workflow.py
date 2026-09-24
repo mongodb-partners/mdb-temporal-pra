@@ -1,9 +1,9 @@
-"""BackfillWorkflow — re-embed all docs into a green collection on a model change.
+"""BackfillWorkflow: re-embed all docs into a green collection on a model change.
 
 Reads the source (currently-active) collection in pages, re-embeds each chunk with the
 new model, and writes to the target collection (which gets its own vector index at the new
 dimension). History is bounded with continue-as-new. Cutover (flipping the active pointer)
-is a separate operator step — see pipeline/cutover.py.
+is a separate operator step; see pipeline/cutover.py.
 """
 
 from __future__ import annotations

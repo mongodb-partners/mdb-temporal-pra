@@ -1,4 +1,4 @@
-"""Shared vector-search over the active (cut-over-aware) knowledge collection."""
+"""Vector search over the active collection. Returns pointers; text comes from spanio."""
 
 from __future__ import annotations
 
@@ -25,12 +25,15 @@ def vector_search(query: str, k: int = 5) -> list[dict[str, Any]]:
             }
         },
         {
+            # No text. The searchable collection has none to project, and asking for
+            # it would silently return nothing rather than fail loudly.
             "$project": {
                 "_id": 0,
                 "source_uri": 1,
                 "chunk_id": 1,
                 "ordinal": 1,
-                "text": 1,
+                "span": 1,
+                "metadata": 1,
                 "score": {"$meta": "vectorSearchScore"},
             }
         },

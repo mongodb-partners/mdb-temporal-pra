@@ -1,23 +1,14 @@
-"""PDF extractor: per-page text (pypdf), then character-window each page."""
+"""PDF extractor: deferred. PDF text is extracted, not sliced, so a byte range
+cannot reproduce it exactly.
+"""
 
 from __future__ import annotations
 
-import io
-from typing import Any
-
-from .base import Extractor, window
+from .base import Extractor, UnsupportedSource
 
 
 class PdfExtractor(Extractor):
     name = "pdf"
 
-    def pieces(self, body: bytes) -> list[tuple[str, dict[str, Any]]]:
-        from pypdf import PdfReader
-
-        reader = PdfReader(io.BytesIO(body))
-        out: list[tuple[str, dict[str, Any]]] = []
-        for page_no, page in enumerate(reader.pages, start=1):
-            text = page.extract_text() or ""
-            for w in window(text, self.chunk_size, self.chunk_overlap):
-                out.append((w, {"page": page_no}))
-        return out
+    def ranges(self, text, c2b):
+        raise UnsupportedSource("pdf is deferred: extracted text has no byte range in the file")

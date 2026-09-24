@@ -1,7 +1,8 @@
-"""Parse S3 event notifications (from SQS, MinIO, or a sources doc) into S3Refs.
+"""Parse S3 event notifications (direct, an SQS message body, or SNS-wrapped) into S3Refs.
 
-AWS emits ``eventName`` like ``ObjectCreated:Put``; MinIO emits ``s3:ObjectCreated:Put``.
-Both share the ``Records[].s3`` shape, so one parser handles all sources.
+AWS emits ``eventName`` like ``ObjectCreated:Put``; some S3-compatible stores prefix it
+as ``s3:ObjectCreated:Put``. Both share the ``Records[].s3`` shape, so one parser
+handles all of them.
 """
 
 from __future__ import annotations

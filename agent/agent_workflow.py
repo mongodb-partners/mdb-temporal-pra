@@ -19,7 +19,7 @@ with workflow.unsafe.imports_passed_through():
 
     from pipeline.config import settings
 
-    from .tools import rerank_tool, vector_search_tool
+    from .tools import read_span_tool, rerank_tool, vector_search_tool
 
 
 _INSTRUCTIONS = (
@@ -30,8 +30,11 @@ _INSTRUCTIONS = (
     "focused query — do not cover several concepts in one broad search. For a genuinely "
     "single-topic question, one search is fine.\n"
     "- If a search returns thin or off-target results, reformulate the query and search again.\n"
-    "- Call `rerank_tool` with the collected chunk_ids to prioritize the best chunks before "
-    "answering.\n"
+    "- Search results are pointers with no text. Call `rerank_tool` with the collected "
+    "chunk_ids: it reads each chunk's verified source text and returns the best ones with "
+    "their text. Use `read_span_tool` to read any other single chunk_id.\n"
+    "- Quote only text a tool returned. A chunk whose status is not \"ok\" is unavailable: "
+    "say so and name its source_uri, never reconstruct it.\n"
     "- Use web search to SUPPLEMENT the docs: for very recent changes, topics the knowledge "
     "base does not cover, or to corroborate a claim. The ingested docs are authoritative for "
     "how Temporal works — prefer them over the open web when they conflict.\n"
@@ -44,6 +47,7 @@ _INSTRUCTIONS = (
 _TOOL_LABELS = {
     "vector_search_tool": "Searching the docs…",
     "rerank_tool": "Reranking results…",
+    "read_span_tool": "Reading the source…",
     "WebSearchTool": "Searching the web…",
     "web_search": "Searching the web…",
     "web_search_call": "Searching the web…",
@@ -103,6 +107,7 @@ class DeepResearchAgent:
                     vector_search_tool, start_to_close_timeout=timedelta(seconds=30)
                 ),
                 activity_as_tool(rerank_tool, start_to_close_timeout=timedelta(seconds=30)),
+                activity_as_tool(read_span_tool, start_to_close_timeout=timedelta(seconds=30)),
                 # Hosted tool: runs inside the model-call activity (OpenAI Responses API),
                 # not as a separate Temporal activity. Requires a web-search-capable model.
                 WebSearchTool(),

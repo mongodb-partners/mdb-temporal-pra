@@ -2,7 +2,6 @@
 # Run `make` (or `make help`) to list targets.
 
 SHELL := /bin/bash
-COMPOSE := docker compose --env-file .env -f infra/docker-compose.yml
 PY := uv run python
 LOGDIR := .local
 
@@ -32,7 +31,7 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 	@echo
-	@echo "One-shot:   make start   (infra + temporal + worker + trigger-api + agent-api)"
+	@echo "One-shot:   make start   (temporal + worker + trigger-api + agent-api)"
 	@echo "Then:       make index (once) ; make seed ; make agent-ui"
 	@echo "Teardown:   make stop"
 
@@ -58,29 +57,6 @@ setup: check-env install ## Setup Python deps and UI (npm install)
 	@cd agent/ui && npm install
 	@echo "setup complete. Run 'make start' to start all services."
 
-# ---------------------------------------------------------------------------
-# Infra (MinIO)
-# ---------------------------------------------------------------------------
-
-# --wait only covers long-running services; the *-setup containers are one-shot (exit 0),
-# which `docker compose up --wait` would otherwise treat as a failure.
-.PHONY: infra-up
-infra-up: .env ## Start MinIO (default local ingress: MinIO webhook -> trigger_api /ingest-event)
-	@$(COMPOSE) up -d --wait minio
-	@$(COMPOSE) up -d minio-setup
-
-.PHONY: infra-down
-infra-down: ## Stop infra containers (keep volumes)
-	$(COMPOSE) down
-
-.PHONY: infra-clean
-infra-clean: ## Stop infra and wipe volumes (MinIO data)
-	$(COMPOSE) down -v
-
-.PHONY: infra-logs
-infra-logs: ## Tail infra container logs
-	$(COMPOSE) logs -f
-
 .PHONY: index
 index: check-env ## Create Atlas Vector Search index on the active collection
 	$(PY) -m infra.create_atlas_index
@@ -98,7 +74,7 @@ worker: check-env ## Run the Temporal worker (foreground)
 	$(PY) -m pipeline.worker
 
 .PHONY: trigger-api
-trigger-api: check-env ## Run the trigger HTTP endpoint (MinIO webhook -> /ingest-event; manual /ingest-trigger)
+trigger-api: check-env ## Run the trigger HTTP endpoint (/ingest-trigger {bucket,key}; /ingest-event S3 envelope)
 	$(PY) -m pipeline.trigger_api
 
 .PHONY: agent-api
@@ -114,7 +90,7 @@ agent-ui: ## Run the React (Vite) deep-agent UI
 # ---------------------------------------------------------------------------
 
 .PHONY: start
-start: install .env infra-up ## Start everything in the background (NO_WORKER=1 skips the worker so you can run 'make worker' in the foreground)
+start: install .env ## Start everything in the background (NO_WORKER=1 skips the worker so you can run 'make worker' in the foreground)
 	@mkdir -p $(LOGDIR)
 	@if bash -c 'exec 3<>/dev/tcp/127.0.0.1/7233' 2>/dev/null; then \
 		echo "temporal: already running on :7233 — reusing it"; \
@@ -137,7 +113,7 @@ start: install .env infra-up ## Start everything in the background (NO_WORKER=1 
 	@$(MAKE) -s _bg NAME=agent-ui CMD="npm --prefix agent/ui run dev -- --host 0.0.0.0"
 	@sleep 2
 	@echo
-	@echo "started. Temporal UI: http://localhost:8233 | Agent UI: http://localhost:5173 | MinIO: http://localhost:9001 | Trigger API: http://localhost:8088"
+	@echo "started. Temporal UI: http://localhost:8233 | Agent UI: http://localhost:5173 | Trigger API: http://localhost:8088"
 	@if [ -n "$(NO_WORKER)" ]; then echo "NOTE: worker NOT started — run 'make worker' in a separate foreground terminal (kill it mid-ingest to demo durability)"; fi
 	@echo "next: 'make index' (once) ; 'make seed'"
 	@echo "logs: 'make app-logs'   stop: 'make stop'"
@@ -149,15 +125,14 @@ _bg:
 	@PYTHONUNBUFFERED=1 nohup $(CMD) > $(LOGDIR)/$(NAME).log 2>&1 & echo $$! > $(LOGDIR)/$(NAME).pid
 
 .PHONY: stop
-stop: stop-app ## Stop background app processes, Temporal, and infra
+stop: stop-app ## Stop background app processes and Temporal
 	@-if [ -f $(LOGDIR)/temporal.pid ]; then \
 		kill $$(cat $(LOGDIR)/temporal.pid) 2>/dev/null && echo "stopped temporal" || true; \
 		rm -f $(LOGDIR)/temporal.pid; \
 	fi
-	@$(COMPOSE) down
 
 .PHONY: stop-app
-stop-app: ## Stop worker + trigger-api + agent-api + agent-ui (leaves Temporal + infra up)
+stop-app: ## Stop worker + trigger-api + agent-api + agent-ui (leaves Temporal up)
 	@-for pat in pipeline.worker pipeline.trigger_api agent.api "agent/ui.*vite"; do \
 		pkill -f "$$pat" 2>/dev/null && echo "stopped $$pat" || true; \
 	done
@@ -166,7 +141,7 @@ stop-app: ## Stop worker + trigger-api + agent-api + agent-ui (leaves Temporal +
 	done
 
 .PHONY: restart-app
-restart-app: stop-app ## Restart app processes (e.g. after editing .env) — leaves infra + Temporal up
+restart-app: stop-app ## Restart app processes (e.g. after editing .env) . Leaves Temporal up
 	@mkdir -p $(LOGDIR)
 	@sleep 1
 	@$(MAKE) -s _bg NAME=worker CMD="$(PY) -u -m pipeline.worker"
@@ -189,7 +164,7 @@ app-logs: ## Tail worker + trigger-api + agent-api + agent-ui + temporal logs
 # ---------------------------------------------------------------------------
 
 .PHONY: seed
-seed: check-env ## Upload a file to MinIO to trigger ingestion (defaults to seed/awesome-temporal.md)
+seed: check-env ## Upload a file to S3_BUCKET and start its IngestWorkflow (defaults to seed/awesome-temporal.md)
 	$(PY) -m pipeline.seed $(if $(FILE),--file $(FILE)) $(if $(KEY),--key $(KEY))
 
 .PHONY: seed-docs

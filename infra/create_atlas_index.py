@@ -80,19 +80,35 @@ def ensure_collections_and_indexes() -> dict[str, list[str]]:
     return {"collections": created_collections, "indexes": created_indexes}
 
 
+def _select_definitions(defs: dict, collection: str | None) -> dict:
+    """Filter index definitions down to the requested collection.
+
+    Raises ValueError when a collection is requested but matches no
+    definition, instead of silently selecting nothing. A renamed or
+    misspelled collection name must be loud, not a quiet no-op.
+    """
+    if collection is None:
+        return defs
+    if collection not in defs:
+        raise ValueError(
+            f"no index definition for collection '{collection}' in {_DEFS_PATH}. "
+            f"known collections: {sorted(defs)}"
+        )
+    return {collection: defs[collection]}
+
+
 def ensure_atlas_indexes(collection: str | None = None, dim: int | None = None) -> list[str]:
     """Ensure configured Atlas Search indexes exist and return created index names."""
     with open(_DEFS_PATH) as fh:
         defs = json.load(fh)["collections"]
+
+    defs = _select_definitions(defs, collection)
 
     db = mongo_client()[settings.mongodb_db]
     resolved_dim = dim or settings.embed_dim
     created: list[str] = []
 
     for coll_name, spec in defs.items():
-        if collection and coll_name != collection:
-            continue
-
         # Ensure the collection exists so the search index can attach.
         if coll_name not in db.list_collection_names():
             db.create_collection(coll_name)
@@ -104,7 +120,7 @@ def ensure_atlas_indexes(collection: str | None = None, dim: int | None = None) 
 
         coll = db[coll_name]
         if spec["name"] in _existing_index_names(coll):
-            print(f"[{coll_name}] index '{spec['name']}' already exists — skipping")
+            print(f"[{coll_name}] index '{spec['name']}' already exists, skipping")
             continue
 
         model = SearchIndexModel(definition=spec["definition"], name=spec["name"], type=spec["type"])
@@ -112,7 +128,7 @@ def ensure_atlas_indexes(collection: str | None = None, dim: int | None = None) 
         created.append(f"{coll_name}:{spec['name']}")
         print(
             f"[{coll_name}] creating '{spec['name']}' "
-            f"(dim={resolved_dim}, cosine) — building in the background"
+            f"(dim={resolved_dim}, cosine), building in the background"
         )
 
     return created
@@ -131,6 +147,7 @@ def main() -> None:
     parser.add_argument("--dim", type=int, help="Override numDimensions (default: EMBED_DIM).")
     args = parser.parse_args()
 
+    ensure_collections_and_indexes()
     ensure_atlas_indexes(collection=args.collection, dim=args.dim)
 
     print("done. Index builds may take a minute; check status in the Atlas UI or list_search_indexes().")

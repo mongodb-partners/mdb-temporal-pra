@@ -1,5 +1,5 @@
-# ABOUTME: AWS Lambda entrypoint — S3 ObjectCreated event -> Temporal IngestWorkflow.
-# Thin adapter over the shared handle_s3_event core; the same logic the MinIO webhook runs.
+# AWS Lambda entrypoint: S3 ObjectCreated event -> Temporal IngestWorkflow.
+# Thin adapter over the shared handle_s3_event core; the same logic trigger_api's /ingest-event runs.
 
 from __future__ import annotations
 

@@ -1,37 +1,77 @@
-"""Extractor base: turn raw object bytes into ordered chunks.
+"""Extractor base: turn raw object bytes into ordered chunks plus byte spans.
 
-Each concrete extractor implements ``pieces()`` (type-specific segmentation); the base
-assigns global ordinals and drops empties. A shared character-window splitter with overlap
-is provided for extractors that need it.
+Subclasses implement ``ranges()``, which returns character ranges over the decoded
+text. The base converts those to byte spans through one prefix array per document,
+so the invariant ``body[span.start:span.end].decode() == chunk.text`` is enforced
+in exactly one place.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+from ..models import Span
+
+
+class UnsupportedSource(Exception):
+    """The object cannot be indexed zero-copy. Carries a human-readable reason."""
 
 
 @dataclass
 class RawChunk:
     ordinal: int
-    text: str
+    text: str  # in-memory only; never persisted
+    span: Span
     meta: dict[str, Any] = field(default_factory=dict)
 
 
-def window(text: str, size: int, overlap: int) -> list[str]:
-    """Character-window split with overlap. Deterministic; drops blank windows."""
-    text = text.strip()
-    if not text:
+def char_to_byte_map(text: str) -> list[int]:
+    """Prefix array where ``out[i]`` is the UTF-8 byte offset of character ``i``.
+
+    Built once per document. Re-encoding a prefix per chunk would be quadratic on a
+    400-chunk file.
+    """
+    out = [0] * (len(text) + 1)
+    total = 0
+    for i, ch in enumerate(text):
+        out[i] = total
+        total += len(ch.encode("utf-8"))
+    out[len(text)] = total
+    return out
+
+
+def trim_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    """Move both edges inward past whitespace. Returns ``(start, start)`` if all blank."""
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
+def window_indices(
+    text: str, start: int, end: int, size: int, overlap: int
+) -> list[tuple[int, int]]:
+    """Character-window a range with overlap, returning index pairs rather than strings."""
+    start, end = trim_bounds(text, start, end)
+    if start >= end:
         return []
     if size <= 0:
-        return [text]
+        return [(start, end)]
     step = max(1, size - overlap)
-    return [text[i : i + size] for i in range(0, len(text), step) if text[i : i + size].strip()]
+    out: list[tuple[int, int]] = []
+    for i in range(start, end, step):
+        w0, w1 = trim_bounds(text, i, min(i + size, end))
+        if w0 < w1:
+            out.append((w0, w1))
+    return out
 
 
 class Extractor(ABC):
-    """Base extractor. Subclasses set ``name`` and implement ``pieces``."""
+    """Base extractor. Subclasses set ``name`` and implement ``ranges``."""
 
     name: str = "base"
 
@@ -40,12 +80,31 @@ class Extractor(ABC):
         self.chunk_overlap = chunk_overlap
 
     @abstractmethod
-    def pieces(self, body: bytes) -> list[tuple[str, dict[str, Any]]]:
-        """Return ordered (text, meta) pairs before ordinal assignment."""
+    def ranges(self, text: str, c2b: Sequence[int]) -> list[tuple[int, int, dict[str, Any]]]:
+        """Return ordered ``(char_start, char_end, meta)`` triples over ``text``.
+
+        Any offsets placed in ``meta`` must already be byte offsets, converted
+        through ``c2b`` by the subclass.
+        """
 
     def chunk(self, body: bytes) -> list[RawChunk]:
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise UnsupportedSource(f"not valid utf-8: {exc}") from exc
+
+        c2b = char_to_byte_map(text)
+        if c2b[len(text)] != len(body):
+            raise UnsupportedSource("byte map does not cover the object")
+
         out: list[RawChunk] = []
-        for text, meta in self.pieces(body):
-            if text and text.strip():
-                out.append(RawChunk(ordinal=len(out), text=text, meta={**meta, "extractor": self.name}))
+        for cs, ce, meta in self.ranges(text, c2b):
+            out.append(
+                RawChunk(
+                    ordinal=len(out),
+                    text=text[cs:ce],
+                    span=Span(start=c2b[cs], end=c2b[ce]),
+                    meta={**meta, "extractor": self.name},
+                )
+            )
         return out

@@ -15,11 +15,33 @@ from temporalio.contrib.openai_agents import ModelActivityParameters, OpenAIAgen
 from temporalio.worker import Worker
 
 from agent.agent_workflow import DeepResearchAgent
-from agent.tools import rerank_tool, vector_search_tool
+from agent.tools import read_span_tool, rerank_tool, vector_search_tool
 
 from .activities import ALL_ACTIVITIES
 from .config import settings
 from .workflows import ALL_WORKFLOWS
+
+# Sync activities (pymongo, voyage, boto3) run in a thread pool of this size.
+ACTIVITY_THREADS = 16
+
+
+def build_worker(
+    client: Client,
+    executor: ThreadPoolExecutor,
+    agent_workflows: list | None = None,
+    agent_activities: list | None = None,
+) -> Worker:
+    # Accept no more activities than there are threads. An activity's timeout starts
+    # when the worker accepts it, so any excess would sit in the executor queue with
+    # its start_to_close timer already running.
+    return Worker(
+        client,
+        task_queue=settings.temporal_task_queue,
+        workflows=[*ALL_WORKFLOWS, *(agent_workflows or [])],
+        activities=[*ALL_ACTIVITIES, *(agent_activities or [])],
+        activity_executor=executor,
+        max_concurrent_activities=ACTIVITY_THREADS,
+    )
 
 
 async def main() -> None:
@@ -39,7 +61,7 @@ async def main() -> None:
             )
         )
         agent_workflows = [DeepResearchAgent]
-        agent_activities = [vector_search_tool, rerank_tool]
+        agent_activities = [vector_search_tool, rerank_tool, read_span_tool]
     else:
         print("[worker] OPENAI_API_KEY not set — durable research agent disabled")
 
@@ -49,16 +71,8 @@ async def main() -> None:
         plugins=plugins,
     )
 
-    # Sync activities (pymongo / voyage / boto3) run in this thread pool; async
-    # activities run on the worker event loop.
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        worker = Worker(
-            client,
-            task_queue=settings.temporal_task_queue,
-            workflows=[*ALL_WORKFLOWS, *agent_workflows],
-            activities=[*ALL_ACTIVITIES, *agent_activities],
-            activity_executor=executor,
-        )
+    with ThreadPoolExecutor(max_workers=ACTIVITY_THREADS) as executor:
+        worker = build_worker(client, executor, agent_workflows, agent_activities)
         print(
             f"[worker] connected to {settings.temporal_address} "
             f"(ns={settings.temporal_namespace}) on task queue '{settings.temporal_task_queue}'"

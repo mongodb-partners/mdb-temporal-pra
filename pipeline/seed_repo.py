@@ -1,4 +1,4 @@
-"""Upload only Markdown/MDX files from a local repo tree to S3/MinIO.
+"""Upload only Markdown/MDX files from a local repo tree to S3, then start their ingests.
 
 Run:
     uv run python -m pipeline.seed_repo /path/to/repo
@@ -20,6 +20,8 @@ from pathlib import Path
 
 from .clients import s3_client
 from .config import settings
+from .models import S3Ref
+from .trigger import start_ingests
 
 _ALLOWED_SUFFIXES = {".md", ".mdx"}
 _SKIP_DIRS = {".git"}
@@ -78,6 +80,11 @@ def main() -> None:
     parser.add_argument("--bucket", default=settings.s3_bucket, help="Override the target bucket.")
     parser.add_argument("--dry-run", action="store_true", help="Print matching files without uploading.")
     parser.add_argument("--delay-ms", type=int, default=0, help="Delay between uploads in milliseconds.")
+    parser.add_argument(
+        "--no-trigger",
+        action="store_true",
+        help="Upload only. Use when an S3 event trigger (Lambda) already starts the ingests.",
+    )
     args = parser.parse_args()
 
     if args.repo_url:
@@ -92,7 +99,7 @@ def main() -> None:
     if not root.exists() or not root.is_dir():
         raise SystemExit(f"source_dir is not a directory: {root}")
     if not args.bucket:
-        raise SystemExit("S3_BUCKET is not set — populate .env or pass --bucket.")
+        raise SystemExit("S3_BUCKET is not set. Populate .env or pass --bucket.")
     if args.delay_ms < 0:
         raise SystemExit("--delay-ms must be >= 0")
 
@@ -109,19 +116,31 @@ def main() -> None:
         return
 
     client = s3_client()
-    uploaded = 0
+    refs: list[S3Ref] = []
     delay_seconds = args.delay_ms / 1000.0
     for path in files:
         key = _key_for(path, root, prefix)
         content_type = mimetypes.guess_type(path.name)[0] or "text/markdown"
         with path.open("rb") as fh:
-            client.put_object(Bucket=args.bucket, Key=key, Body=fh.read(), ContentType=content_type)
-        uploaded += 1
+            body = fh.read()
+        resp = client.put_object(Bucket=args.bucket, Key=key, Body=body, ContentType=content_type)
+        refs.append(
+            S3Ref.make(
+                bucket=args.bucket,
+                key=key,
+                etag=(resp or {}).get("ETag", ""),
+                size=len(body),
+                content_type=content_type,
+            )
+        )
         print(f"uploaded s3://{args.bucket}/{key}")
         if delay_seconds > 0:
             time.sleep(delay_seconds)
 
-    print(f"uploaded {uploaded} markdown files from {root} to s3://{args.bucket}/{prefix}/")
+    print(f"uploaded {len(refs)} markdown files from {root} to s3://{args.bucket}/{prefix}/")
+    if not args.no_trigger:
+        started = start_ingests(refs)
+        print(f"started {len(started)} ingest workflows")
 
 
 if __name__ == "__main__":

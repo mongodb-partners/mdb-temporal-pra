@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     mongodb_uri: str = ""
     mongodb_db: str = "temporal"
     chunks_collection: str = "chunks_staging"     # staged chunks between workflow stages
-    knowledge_collection: str = "knowledge"       # searchable embedded chunks (blue)
+    knowledge_collection: str = "knowledge_zc"    # searchable pointers + vectors (no text)
     knowledge_v2_collection: str = "knowledge_v2" # blue/green backfill target (green)
     config_collection: str = "temporal_config"         # cutover active-pointer doc
     memory_collection: str = "agent_memory"       # deep-agent write-back
@@ -61,10 +61,15 @@ class Settings(BaseSettings):
     # ---- Voyage AI ----
     voyage_api_key: str = ""
     voyage_model: str = "voyage-3.5"
-    voyage_rerank_model: str = "rerank-2.5"
+    # MongoDB's hosted Voyage endpoint. The voyageai SDK would infer this from
+    # the key prefix (al- routes here, anything else to api.voyageai.com); set
+    # it explicitly so the endpoint is predictable (and allow-listable)
+    # instead of depending on the shape of a credential.
+    voyage_base_url: str = "https://ai.mongodb.com/v1"
     embed_dim: int = 1024
+    voyage_rerank_model: str = "rerank-2.5"
 
-    # ---- OpenAI (durable research agent — OpenAI Agents SDK on Temporal) ----
+    # ---- Durable research agent (OpenAI Agents SDK) ----
     openai_api_key: str = ""
     agent_model: str = "gpt-4.1"  # OpenAI model for the agent loop; adjust to a current one
     agent_max_turns: int = 8  # guardrail on the tool-use loop
@@ -75,33 +80,15 @@ class Settings(BaseSettings):
 
     # ---- AWS / S3 ----
     aws_region: str = "us-east-1"
-    # Explicit creds (also matches MinIO's minioadmin/minioadmin). Leave blank on real
-    # AWS to fall back to the standard credential chain (profile / role / env).
+    # Explicit creds. Leave blank to fall back to boto3's standard credential chain
+    # (profile / role / env).
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     s3_bucket: str = ""
-    sqs_queue_url: str = ""
-    # Set to a MinIO endpoint (e.g. http://localhost:9000) to use MinIO instead of AWS S3.
-    s3_endpoint_url: str = ""
-    # Source selection: "auto" picks minio (if s3_endpoint_url) -> sqs (if queue) -> poll.
-    s3_source: str = "auto"  # auto | minio | sqs | poll
-
-    def resolved_source(self) -> str:
-        if self.s3_source != "auto":
-            return self.s3_source
-        if self.s3_endpoint_url:
-            return "minio"
-        if self.sqs_queue_url:
-            return "sqs"
-        return "poll"
 
     # ---- Chunking ----
     chunk_size: int = 1200
     chunk_overlap: int = 150
-
-    # ---- S3 poll fallback ----
-    s3_poll_prefix: str = ""
-    s3_poll_interval_seconds: int = 15
 
 
 @lru_cache(maxsize=1)

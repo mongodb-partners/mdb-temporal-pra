@@ -1,4 +1,4 @@
-# ABOUTME: Tests for refs_from_s3_event — the shared S3/MinIO/SNS event parser.
+# Tests for refs_from_s3_event, the shared S3/SQS/SNS event parser.
 # Covers SNS unwrapping, TestEvent filtering, key url-decoding, and event-type filtering.
 
 from __future__ import annotations

@@ -9,6 +9,22 @@ import argparse
 
 from pipeline.config_store import get_active
 from pipeline.retrieval import vector_search
+from pipeline.spanio import read_span
+
+
+def format_hit(hit: dict, resolved: dict) -> str:
+    """Render one search hit plus its resolved read_span outcome as printable lines.
+
+    The hit carries score, source_uri and span (all vector_search projects). The
+    resolved dict is what read_span(hit["chunk_id"]) returned: only status "ok"
+    carries a "text" key, so every other status is rendered as its status, not
+    treated as an error.
+    """
+    header = f"[{hit['score']:.4f}] {hit['source_uri']} #{hit['chunk_id']} {hit['span']}"
+    if resolved["status"] == "ok":
+        snippet = resolved["text"][:160].replace("\n", " ")
+        return f"{header}\n    {snippet}...\n"
+    return f"{header}\n    <{resolved['status']}: text not available>\n"
 
 
 def main() -> None:
@@ -22,11 +38,11 @@ def main() -> None:
 
     results = vector_search(args.query, k=args.k)
     if not results:
-        print("no results — is data ingested and the index built?")
+        print("no results. Is data ingested and the index built?")
         return
     for r in results:
-        snippet = r["text"][:160].replace("\n", " ")
-        print(f"[{r['score']:.4f}] {r['source_uri']} #{r['chunk_id']}\n    {snippet}...\n")
+        resolved = read_span(r["chunk_id"])
+        print(format_hit(r, resolved))
 
 
 if __name__ == "__main__":

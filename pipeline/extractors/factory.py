@@ -1,31 +1,32 @@
-"""Factory: pick an extractor by file extension / content type."""
+"""Factory: pick an extractor by file extension / content type.
+
+Markdown only. Everything else is refused rather than silently routed to a
+text-storing path, because a partially zero-copy collection is worse than an
+honest gap.
+"""
 
 from __future__ import annotations
 
 from ..config import settings
-from .base import Extractor
-from .csv_ext import CsvExtractor
+from .base import Extractor, UnsupportedSource
 from .markdown import MarkdownExtractor
-from .pdf import PdfExtractor
-from .text import TextExtractor
 
 _BY_EXT: dict[str, type[Extractor]] = {
     "md": MarkdownExtractor,
     "markdown": MarkdownExtractor,
-    "pdf": PdfExtractor,
-    "csv": CsvExtractor,
 }
 
 _BY_MIME: dict[str, type[Extractor]] = {
     "text/markdown": MarkdownExtractor,
-    "application/pdf": PdfExtractor,
-    "text/csv": CsvExtractor,
-    "application/csv": CsvExtractor,
+    "text/x-markdown": MarkdownExtractor,
 }
 
 
 def get_extractor(key: str, content_type: str = "") -> Extractor:
-    """Return the extractor for an object, defaulting to plain text."""
+    """Return the extractor for an object, or raise UnsupportedSource."""
     ext = key.rsplit(".", 1)[-1].lower() if "." in key else ""
-    cls = _BY_EXT.get(ext) or _BY_MIME.get((content_type or "").split(";")[0].strip()) or TextExtractor
+    mime = (content_type or "").split(";")[0].strip().lower()
+    cls = _BY_EXT.get(ext) or _BY_MIME.get(mime)
+    if cls is None:
+        raise UnsupportedSource(f"unsupported source type: key={key!r} content_type={mime!r}")
     return cls(chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)

@@ -3,6 +3,13 @@
 A production-grade reference implementation that shows how **Temporal** and **MongoDB Atlas** work
 together to build a durable, change-driven RAG pipeline with a deep-agent chat interface.
 
+> **This branch is `main` plus zero-copy RAG.** The OpenAI Agents SDK research agent is
+> unchanged in shape, but the index now holds pointers and embeddings only.
+> `vector_search_tool` returns pointers, `read_span_tool` reads the exact bytes back from S3 and
+> verifies them against a SHA-256 recorded at index time, and `rerank_tool` reranks verified
+> text only. Local MinIO is not supported here: set `S3_BUCKET` to a real bucket. Sections below
+> that mention MinIO or chunk text in Atlas describe `main`.
+
 > **Developers:** see [docs/RUNBOOK.md](docs/RUNBOOK.md) for prerequisites, API key setup,
 > local spin-up, and cloud infra references.
 
