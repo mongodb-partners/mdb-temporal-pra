@@ -7,8 +7,11 @@ together to build a durable, change-driven RAG pipeline with a deep-agent chat i
 > unchanged in shape, but the index now holds pointers and embeddings only.
 > `vector_search_tool` returns pointers, `read_span_tool` reads the exact bytes back from S3 and
 > verifies them against a SHA-256 recorded at index time, and `rerank_tool` reranks verified
-> text only. Local MinIO is not supported here: set `S3_BUCKET` to a real bucket. Sections below
-> that mention MinIO or chunk text in Atlas describe `main`.
+> text only. It runs against AWS S3 or, locally, MinIO: put `S3_ENDPOINT_URL=http://localhost:9000`
+> and the MinIO credentials in `.env.minio` and run `make start ENV_FILE=.env.minio`, which starts
+> MinIO, creates the bucket and wires its webhook to `/ingest-event`. The agent can also call any
+> OpenAI-compatible gateway via `OPENAI_BASE_URL` (see `.env.example`). Sections below that
+> mention chunk text in Atlas describe `main`.
 
 > **Developers:** see [docs/RUNBOOK.md](docs/RUNBOOK.md) for prerequisites, API key setup,
 > local spin-up, and cloud infra references.

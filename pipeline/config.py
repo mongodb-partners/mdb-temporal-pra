@@ -7,6 +7,7 @@ values into activities/clients.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from pydantic_settings import (
@@ -20,7 +21,8 @@ from pydantic_settings import (
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # ENV_FILE picks the dotenv file (e.g. .env.minio for local MinIO); default .env.
+        env_file=os.environ.get("ENV_FILE", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -71,8 +73,16 @@ class Settings(BaseSettings):
 
     # ---- Durable research agent (OpenAI Agents SDK) ----
     openai_api_key: str = ""
+    # Optional OpenAI-compatible endpoint (a gateway or proxy). Blank means api.openai.com.
+    openai_base_url: str = ""
+    # Also send the key in this header, for gateways that do not read the Bearer token
+    # (e.g. "api-key" on Azure API Management). Blank means Bearer only.
+    openai_api_key_header: str = ""
+    # False selects Chat Completions, for endpoints without the Responses API. The hosted
+    # web-search tool needs the Responses API, so the agent drops it when this is false.
+    openai_use_responses: bool = True
     agent_model: str = "gpt-4.1"  # OpenAI model for the agent loop; adjust to a current one
-    agent_max_turns: int = 8  # guardrail on the tool-use loop
+    agent_max_turns: int = 12  # guardrail on the tool-use loop
 
     # ---- Service ports ----
     trigger_api_port: int = 8088
@@ -85,6 +95,8 @@ class Settings(BaseSettings):
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     s3_bucket: str = ""
+    # S3-compatible endpoint, e.g. http://localhost:9000 for local MinIO. Blank means AWS S3.
+    s3_endpoint_url: str = ""
 
     # ---- Chunking ----
     chunk_size: int = 1200

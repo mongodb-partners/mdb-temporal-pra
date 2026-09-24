@@ -1,0 +1,66 @@
+# Local S3 (MinIO) for running the pipeline without an AWS account.
+# Temporal runs separately via the CLI:  temporal server start-dev
+#
+#   make infra-up ENV_FILE=.env.minio      (or: make start ENV_FILE=.env.minio)
+#
+# Local flow: MinIO (S3) --native webhook--> trigger_api /ingest-event (host process, :8088)
+#             --> Temporal IngestWorkflow. With AWS S3, an S3 -> Lambda trigger plays the
+#             same role (see pipeline/lambda_handler.py).
+#
+# Endpoints:
+#   MinIO S3 API (host):  http://localhost:9000   (S3_ENDPOINT_URL)
+#   MinIO Console:        http://localhost:9001   (minioadmin / minioadmin)
+#
+# Images are pinned and pulled from quay.io: Docker Hub no longer publishes minio/minio.
+
+name: teamporal-app
+
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: temporal-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      # Native S3 -> webhook target (id PRIMARY) -> the trigger_api /ingest-event endpoint,
+      # which runs as a host process (reached via host.docker.internal).
+      MINIO_NOTIFY_WEBHOOK_ENABLE_PRIMARY: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_PRIMARY: "http://host.docker.internal:8088/ingest-event"
+      # Persistent event store: lets MinIO start before the host trigger_api is up and replay
+      # buffered events when it comes online (at-least-once locally).
+      MINIO_NOTIFY_WEBHOOK_QUEUE_DIR_PRIMARY: "/data/.minio/events/webhook"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach the host-run trigger_api from the container
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # One-shot: create S3_BUCKET and subscribe ObjectCreated events to the webhook target.
+  minio-setup:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: temporal-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      BUCKET: ${S3_BUCKET:?set S3_BUCKET in the env file}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing "local/$$BUCKET" &&
+        mc event add "local/$$BUCKET" arn:minio:sqs::PRIMARY:webhook --event put --ignore-existing &&
+        echo "MinIO bucket $$BUCKET wired to webhook /ingest-event:" &&
+        mc event list "local/$$BUCKET"
+    restart: "no"
+
+volumes:
+  minio-data:

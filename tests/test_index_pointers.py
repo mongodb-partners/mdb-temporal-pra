@@ -96,6 +96,10 @@ class _FakeKnow:
         if upsert:
             self.docs.append(dict(doc))
 
+    def bulk_write(self, ops, ordered=True):
+        for op in ops:
+            self.update_one(op._filter, op._doc, upsert=op._upsert)
+
     def delete_many(self, filt):
         self.deletes.append(filt)
         keep = [d for d in self.docs if not _matches(d, filt)]

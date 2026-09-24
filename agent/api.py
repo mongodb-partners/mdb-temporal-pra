@@ -10,17 +10,15 @@ Run:  uv run python -m agent.api
 from __future__ import annotations
 
 import logging
-import os
 import uuid
-from datetime import timedelta
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from temporalio.client import Client
-from temporalio.contrib.openai_agents import ModelActivityParameters, OpenAIAgentsPlugin
 
+from agent.provider import build_openai_agents_plugin
 from infra.create_atlas_index import ensure_atlas_indexes, ensure_collections_and_indexes
 from pipeline.config import settings
 
@@ -67,17 +65,10 @@ async def _get_agent_client() -> Client:
     data converter so agent-workflow results decode correctly."""
     global _agent_client
     if _agent_client is None:
-        os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
         _agent_client = await Client.connect(
             settings.temporal_address,
             namespace=settings.temporal_namespace,
-            plugins=[
-                OpenAIAgentsPlugin(
-                    model_params=ModelActivityParameters(
-                        start_to_close_timeout=timedelta(seconds=60)
-                    )
-                )
-            ],
+            plugins=[build_openai_agents_plugin()],
         )
     return _agent_client
 

@@ -249,7 +249,7 @@ Docs: [Atlas Vector Search](https://www.mongodb.com/docs/atlas/atlas-vector-sear
 ### Seed a document
 
 ```bash
-make seed                                         # uploads seed/awesome-temporal.md
+make seed                                         # uploads seed/ethical_governance.md
 make seed FILE=./my-doc.pdf KEY=docs/my-doc.pdf   # upload your own file
 ```
 

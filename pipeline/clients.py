@@ -103,7 +103,7 @@ def _aws_kwargs(region: str, access_key: str, secret_key: str) -> dict:
 
 
 @lru_cache(maxsize=_CACHE_SIZE)
-def _s3_client_for(region: str, access_key: str, secret_key: str):
+def _s3_client_for(region: str, access_key: str, secret_key: str, endpoint_url: str = ""):
     import boto3
     from botocore.config import Config
 
@@ -114,6 +114,15 @@ def _s3_client_for(region: str, access_key: str, secret_key: str):
     # regional, which makes this a no-op outside us-east-1. Widening the
     # allow-list instead would admit the global endpoint, which fronts buckets in
     # every region.
+    if endpoint_url:
+        # MinIO (or any S3-compatible endpoint) needs an explicit endpoint and
+        # path-style addressing (no virtual-host buckets).
+        return boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            config=Config(s3={"addressing_style": "path"}),
+            **_aws_kwargs(region, access_key, secret_key),
+        )
     return boto3.client(
         "s3",
         config=Config(s3={"us_east_1_regional_endpoint": "regional"}),
@@ -122,4 +131,4 @@ def _s3_client_for(region: str, access_key: str, secret_key: str):
 
 
 def s3_client():
-    return _s3_client_for(*_aws_creds())
+    return _s3_client_for(*_aws_creds(), _resolve(settings.s3_endpoint_url, "S3_ENDPOINT_URL"))

@@ -4,15 +4,21 @@
 SHELL := /bin/bash
 PY := uv run python
 LOGDIR := .local
+# Which dotenv file the app reads. ENV_FILE=.env.minio runs against local MinIO.
+ENV_FILE ?= .env
+export ENV_FILE
+COMPOSE := docker compose --env-file $(ENV_FILE) -f infra/docker-compose.yml
+# Non-empty when the env file points at an S3-compatible endpoint (local MinIO).
+USE_MINIO = $(shell grep -qE '^S3_ENDPOINT_URL=.+' $(ENV_FILE) 2>/dev/null && echo 1)
 
 # Optional args:
 #   make seed FILE=./doc.md KEY=docs/doc.md
 #   make query Q="what does the cookbook say?"
 #   make backfill MODEL=voyage-3-large
 #   make seed-docs
-FILE ?= seed/awesome-temporal.md
+FILE ?= seed/ethical_governance.md
 KEY ?=
-Q ?= what does Temporal own in this architecture?
+Q ?= what are the implementation stages for constitutional AI?
 MODEL ?= voyage-3-large
 REPO_DIR ?=
 PREFIX ?= temporalio-documentation-md-only
@@ -48,8 +54,30 @@ install: ## Install Python deps with uv
 
 .PHONY: check-env
 check-env: .env
-	@grep -q '^MONGODB_URI=mongodb' .env || echo "WARN: MONGODB_URI not set in .env"
-	@grep -qE '^VOYAGE_API_KEY=.+' .env && ! grep -q '^VOYAGE_API_KEY=<' .env || echo "WARN: VOYAGE_API_KEY not set in .env"
+	@test -f $(ENV_FILE) || (echo "ERROR: $(ENV_FILE) not found" && exit 1)
+	@grep -q '^MONGODB_URI=mongodb' $(ENV_FILE) || echo "WARN: MONGODB_URI not set in $(ENV_FILE)"
+	@grep -qE '^VOYAGE_API_KEY=.+' $(ENV_FILE) && ! grep -q '^VOYAGE_API_KEY=<' $(ENV_FILE) || echo "WARN: VOYAGE_API_KEY not set in $(ENV_FILE)"
+
+# ---------------------------------------------------------------------------
+# Local S3 (MinIO). Used when the env file sets S3_ENDPOINT_URL.
+# ---------------------------------------------------------------------------
+
+.PHONY: infra-up
+infra-up: check-env ## Start MinIO, create S3_BUCKET and wire its webhook (ENV_FILE=.env.minio)
+	@$(COMPOSE) up -d --wait minio
+	@$(COMPOSE) up minio-setup
+
+.PHONY: infra-down
+infra-down: ## Stop MinIO (keeps its data volume)
+	$(COMPOSE) down
+
+.PHONY: infra-clean
+infra-clean: ## Stop MinIO and wipe its data volume
+	$(COMPOSE) down -v
+
+.PHONY: infra-logs
+infra-logs: ## Tail MinIO logs
+	$(COMPOSE) logs -f
 
 .PHONY: setup
 setup: check-env install ## Setup Python deps and UI (npm install)
@@ -90,8 +118,9 @@ agent-ui: ## Run the React (Vite) deep-agent UI
 # ---------------------------------------------------------------------------
 
 .PHONY: start
-start: install .env ## Start everything in the background (NO_WORKER=1 skips the worker so you can run 'make worker' in the foreground)
+start: install check-env ## Start everything in the background (NO_WORKER=1 skips the worker; ENV_FILE=.env.minio uses local MinIO)
 	@mkdir -p $(LOGDIR)
+	@if [ -n "$(USE_MINIO)" ]; then $(MAKE) -s infra-up; fi
 	@if bash -c 'exec 3<>/dev/tcp/127.0.0.1/7233' 2>/dev/null; then \
 		echo "temporal: already running on :7233 — reusing it"; \
 	else \
@@ -125,7 +154,8 @@ _bg:
 	@PYTHONUNBUFFERED=1 nohup $(CMD) > $(LOGDIR)/$(NAME).log 2>&1 & echo $$! > $(LOGDIR)/$(NAME).pid
 
 .PHONY: stop
-stop: stop-app ## Stop background app processes and Temporal
+stop: stop-app ## Stop background app processes, Temporal and (if used) MinIO
+	@-if [ -n "$(USE_MINIO)" ]; then $(COMPOSE) stop minio; fi
 	@-if [ -f $(LOGDIR)/temporal.pid ]; then \
 		kill $$(cat $(LOGDIR)/temporal.pid) 2>/dev/null && echo "stopped temporal" || true; \
 		rm -f $(LOGDIR)/temporal.pid; \
@@ -153,7 +183,7 @@ restart-app: stop-app ## Restart app processes (e.g. after editing .env) . Leave
 	fi
 	@$(MAKE) -s _bg NAME=agent-ui CMD="npm --prefix agent/ui run dev -- --host 0.0.0.0"
 	@sleep 2
-	@echo "restarted app processes with current .env"
+	@echo "restarted app processes with current $(ENV_FILE)"
 
 .PHONY: app-logs
 app-logs: ## Tail worker + trigger-api + agent-api + agent-ui + temporal logs
@@ -164,7 +194,7 @@ app-logs: ## Tail worker + trigger-api + agent-api + agent-ui + temporal logs
 # ---------------------------------------------------------------------------
 
 .PHONY: seed
-seed: check-env ## Upload a file to S3_BUCKET and start its IngestWorkflow (defaults to seed/awesome-temporal.md)
+seed: check-env ## Upload a file to S3_BUCKET and start its IngestWorkflow (defaults to seed/ethical_governance.md)
 	$(PY) -m pipeline.seed $(if $(FILE),--file $(FILE)) $(if $(KEY),--key $(KEY))
 
 .PHONY: seed-docs
@@ -176,9 +206,9 @@ query: check-env ## Vector-search the active collection (Q="your question")
 	$(PY) -m infra.query_atlas "$(Q)"
 
 .PHONY: backfill
-backfill: check-env ## Re-embed into knowledge_v2 with a new model (MODEL=voyage-3-large)
+backfill: check-env ## Deferred on zero-copy: fails fast (no stored text); re-ingest from S3 instead
 	$(PY) -m pipeline.trigger_backfill --model $(MODEL)
 
 .PHONY: cutover
-cutover: check-env ## Flip the active collection/index to the backfilled set (TO=knowledge_v2)
+cutover: check-env ## Flip the active collection/index pointer (TO=knowledge_v2)
 	$(PY) -m pipeline.cutover $(if $(TO),--to $(TO))

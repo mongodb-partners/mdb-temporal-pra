@@ -203,8 +203,10 @@ def index_document(doc_id: str, doc_hash: str, target_collection: str | None = N
     n = len(chunks)
     dim = chunks[0]["dim"]
 
-    for c in chunks:
-        know.update_one(
+    # One batched round trip: per-chunk upserts outlast the activity timeout on a large
+    # document over a slow link. Upserts keyed by chunk_id stay idempotent under retry.
+    know.bulk_write([
+        UpdateOne(
             {"chunk_id": c["chunk_id"]},
             {"$set": {
                 "doc_id": doc_id,
@@ -224,6 +226,8 @@ def index_document(doc_id: str, doc_hash: str, target_collection: str | None = N
             }},
             upsert=True,
         )
+        for c in chunks
+    ], ordered=False)
 
     # Update-in-place: drop chunks from a previous version of this doc. Prune by the
     # ordinals actually written, not by how many were written: len(chunks) is only a

@@ -12,9 +12,11 @@ from __future__ import annotations
 from datetime import timedelta
 
 from temporalio import workflow
+from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
-    from agents import Agent, RunHooks, Runner, WebSearchTool
+    from agents import Agent, ModelSettings, RunHooks, Runner, WebSearchTool
+    from agents.exceptions import MaxTurnsExceeded
     from temporalio.contrib.openai_agents.workflow import activity_as_tool
 
     from pipeline.config import settings
@@ -23,8 +25,8 @@ with workflow.unsafe.imports_passed_through():
 
 
 _INSTRUCTIONS = (
-    "You are a precise research assistant answering questions about Temporal, backed by a "
-    "MongoDB Atlas knowledge base of Temporal documentation plus web search.\n"
+    "You are a precise research assistant answering questions from a MongoDB Atlas "
+    "knowledge base of ingested documents, plus web search.\n"
     "- Prefer the ingested docs: decompose any multi-part or comparative question into its "
     "distinct sub-topics and call `vector_search_tool` SEPARATELY for each sub-topic with a "
     "focused query — do not cover several concepts in one broad search. For a genuinely "
@@ -33,15 +35,30 @@ _INSTRUCTIONS = (
     "- Search results are pointers with no text. Call `rerank_tool` with the collected "
     "chunk_ids: it reads each chunk's verified source text and returns the best ones with "
     "their text. Use `read_span_tool` to read any other single chunk_id.\n"
+    "- Tool calls that do not depend on each other (several searches, several reads) go "
+    "out together in one turn.\n"
     "- Quote only text a tool returned. A chunk whose status is not \"ok\" is unavailable: "
     "say so and name its source_uri, never reconstruct it.\n"
     "- Use web search to SUPPLEMENT the docs: for very recent changes, topics the knowledge "
     "base does not cover, or to corroborate a claim. The ingested docs are authoritative for "
-    "how Temporal works — prefer them over the open web when they conflict.\n"
+    "their subject: prefer them over the open web when they conflict.\n"
     "- Answer from your gathered sources. Cite inline as [n]: give the source_uri for "
     "knowledge-base chunks and the URL for web results, address each sub-topic, and make clear "
     "which claims came from the docs vs the web. If neither contains the answer, say so plainly."
+    "\n- Never answer from your own background knowledge, even when you know the answer. "
+    "Every claim needs a citation to a tool result; if the tools returned nothing relevant, "
+    "reply only that the sources do not cover the question."
 )
+
+# Appended when the model provider cannot host web search (Chat Completions).
+_NO_WEB_NOTE = (
+    "\n- Web search is unavailable in this deployment. Answer from the knowledge base only "
+    "and do not cite web URLs."
+)
+
+
+def _instructions() -> str:
+    return _INSTRUCTIONS if settings.openai_use_responses else _INSTRUCTIONS + _NO_WEB_NOTE
 
 # Human-readable progress labels keyed by tool name/type.
 _TOOL_LABELS = {
@@ -99,9 +116,11 @@ class DeepResearchAgent:
     @workflow.run
     async def run(self, query: str) -> dict:
         agent = Agent(
-            name="Temporal docs researcher",
+            name="Knowledge base researcher",
             model=settings.agent_model,
-            instructions=_INSTRUCTIONS,
+            instructions=_instructions(),
+            # Independent reads go out in one turn and run as concurrent activities.
+            model_settings=ModelSettings(parallel_tool_calls=True),
             tools=[
                 activity_as_tool(
                     vector_search_tool, start_to_close_timeout=timedelta(seconds=30)
@@ -109,16 +128,26 @@ class DeepResearchAgent:
                 activity_as_tool(rerank_tool, start_to_close_timeout=timedelta(seconds=30)),
                 activity_as_tool(read_span_tool, start_to_close_timeout=timedelta(seconds=30)),
                 # Hosted tool: runs inside the model-call activity (OpenAI Responses API),
-                # not as a separate Temporal activity. Requires a web-search-capable model.
-                WebSearchTool(),
+                # not as a separate Temporal activity. Chat Completions cannot host it.
+                *([WebSearchTool()] if settings.openai_use_responses else []),
             ],
         )
-        result = await Runner.run(
-            agent,
-            query,
-            max_turns=settings.agent_max_turns,
-            hooks=_ProgressHooks(self._steps),
-        )
+        try:
+            result = await Runner.run(
+                agent,
+                query,
+                max_turns=settings.agent_max_turns,
+                hooks=_ProgressHooks(self._steps),
+            )
+        except MaxTurnsExceeded as e:
+            # Not a Temporal failure type: left alone it fails the workflow task, which
+            # retries forever and leaves the run RUNNING. Fail the run instead.
+            self._done = True
+            raise ApplicationError(
+                f"{e} (AGENT_MAX_TURNS={settings.agent_max_turns})",
+                type="MaxTurnsExceeded",
+                non_retryable=True,
+            ) from e
 
         # Best-effort tool-call trajectory (the durable source of truth is workflow history).
         try:

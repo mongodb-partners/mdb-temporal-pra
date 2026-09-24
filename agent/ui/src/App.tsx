@@ -2,9 +2,9 @@ import { useState } from "react";
 import type { ProgressResponse, StartResponse } from "./types";
 
 const EXAMPLES = [
-  "Compare Signals, Queries, and Updates in Temporal — how does each work and when to use it?",
-  "What is a Temporal Workflow and how does it work?",
-  "How do I start a Temporal worker in Python?",
+  "What is constitutional AI and how does MongoDB Atlas support it?",
+  "What are the implementation stages for constitutional AI with MongoDB Atlas?",
+  "What are the considerations and limitations of constitutional AI?",
 ];
 
 // Temporal Web UI (dev server). Used to deep-link the durable agent workflow run.
@@ -75,7 +75,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>Temporal Docs — Research Agent</h1>
+        <h1>Knowledge Base Research Agent</h1>
         <p className="sub">Durable OpenAI agent on Temporal · vector search + rerank + web search</p>
       </header>
 
@@ -89,7 +89,7 @@ export default function App() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Ask a question about the Temporal documentation…"
+          placeholder="Ask a question about the ingested documents…"
           autoFocus
         />
         <button type="submit" disabled={loading || !query.trim()}>

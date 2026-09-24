@@ -64,3 +64,19 @@ def test_two_keys_do_not_share_one_cached_client(built, monkeypatch):
     monkeypatch.setattr(clients.settings, "voyage_api_key", "al-second")
     clients.voyage_client()
     assert [call["api_key"] for call in built] == ["al-first", "al-second"]
+
+
+def test_an_s3_endpoint_selects_path_style_addressing(monkeypatch):
+    """Local MinIO: S3_ENDPOINT_URL routes boto3 there with path-style bucket URLs."""
+    monkeypatch.setattr(clients.settings, "s3_endpoint_url", "http://localhost:9000")
+    clients._s3_client_for.cache_clear()
+    s3 = clients.s3_client()
+    assert s3.meta.endpoint_url == "http://localhost:9000"
+    assert s3.meta.config.s3["addressing_style"] == "path"
+
+
+def test_no_s3_endpoint_keeps_aws(monkeypatch):
+    monkeypatch.setattr(clients.settings, "s3_endpoint_url", "")
+    monkeypatch.delenv("S3_ENDPOINT_URL", raising=False)
+    clients._s3_client_for.cache_clear()
+    assert "amazonaws.com" in clients.s3_client().meta.endpoint_url

@@ -6,15 +6,13 @@ Run:  uv run python -m pipeline.worker
 from __future__ import annotations
 
 import asyncio
-import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
 
 from temporalio.client import Client
-from temporalio.contrib.openai_agents import ModelActivityParameters, OpenAIAgentsPlugin
 from temporalio.worker import Worker
 
 from agent.agent_workflow import DeepResearchAgent
+from agent.provider import build_openai_agents_plugin
 from agent.tools import read_span_tool, rerank_tool, vector_search_tool
 
 from .activities import ALL_ACTIVITIES
@@ -52,14 +50,7 @@ async def main() -> None:
     agent_workflows: list = []
     agent_activities: list = []
     if settings.openai_api_key:
-        os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
-        plugins.append(
-            OpenAIAgentsPlugin(
-                model_params=ModelActivityParameters(
-                    start_to_close_timeout=timedelta(seconds=60)
-                )
-            )
-        )
+        plugins.append(build_openai_agents_plugin())
         agent_workflows = [DeepResearchAgent]
         agent_activities = [vector_search_tool, rerank_tool, read_span_tool]
     else:
