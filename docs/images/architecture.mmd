@@ -1,0 +1,37 @@
+---
+title: Zero-copy RAG on Temporal and MongoDB Atlas (OpenAI Agents SDK)
+---
+flowchart LR
+  S3[("Amazon S3 or MinIO<br/>document bytes, only copy of the text")]
+  subgraph trig[Trigger]
+    LAM["AWS Lambda<br/>lambda_handler"]
+    TAPI["Trigger API<br/>/ingest-event webhook"]
+  end
+  subgraph temporal[Temporal server and worker]
+    IW["IngestWorkflow<br/>stage, embed batches, index"]
+    AW["DeepResearchAgent<br/>OpenAI Agents SDK workflow"]
+  end
+  subgraph atlas[MongoDB Atlas]
+    STG[("chunks_staging<br/>transient span pointers")]
+    KZC[("knowledge_zc<br/>span, SHA-256, ETag, embedding")]
+    CFG[("temporal_config<br/>active model pointer")]
+  end
+  VOY["Voyage AI<br/>embed and rerank"]
+  LLM["OpenAI API<br/>or compatible gateway"]
+  UI["Agent UI<br/>React chat"]
+  API["Agent API<br/>POST /research, poll"]
+  S3 -.->|ObjectCreated| LAM
+  S3 -.->|webhook| TAPI
+  LAM -->|start_workflow| IW
+  TAPI -->|start_workflow| IW
+  IW -->|ranged GET| S3
+  IW -->|stage| STG
+  IW -->|embed| VOY
+  IW -->|upsert pointers| KZC
+  UI --> API
+  API -->|start, progress query| AW
+  AW -->|model calls| LLM
+  AW -->|active model| CFG
+  AW -->|vectorSearch| KZC
+  AW -->|verified read_span| S3
+  AW -->|rerank| VOY

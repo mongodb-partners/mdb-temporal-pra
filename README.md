@@ -50,6 +50,9 @@ next read instead of citing a stale copy.
 
 ## Partner Solutions Architecture
 
+![Architecture](docs/images/architecture.svg)
+
+
 ### High-level design
 
 ```mermaid
